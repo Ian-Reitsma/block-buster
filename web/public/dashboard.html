@@ -1,0 +1,1027 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Block Buster Dashboard</title>
+    <link rel="stylesheet" href="css/tailwind.min.css?v=20260205">
+    <link rel="stylesheet" href="dashboard.css?v=20260205">
+    <script src="runtime-config.js?v=20260205"></script>
+    <script src="js/utils.js?v=20260205"></script>
+    <script>
+        const { apiBase, apiKey } = resolveApiConfig();
+        window.API_BASE = apiBase;
+        window.API_KEY = apiKey;
+        (async function redirectIfGated() {
+            const params = new URLSearchParams(window.location.search);
+            if (params.get('force') === '1' || params.get('nogate') === '1') return;
+            try {
+                const res = await fetch(`${apiBase}/theblock/gates`, { cache: 'no-store' });
+                if (!res.ok) return;
+                const gates = await res.json();
+                const gated = Array.isArray(gates) && gates.some(g => (g.state || '').toLowerCase() !== 'trade');
+                if (gated) {
+                    window.location.replace('network.html?gated=1&from=dashboard');
+                }
+            } catch (_) {}
+        })();
+    </script>
+    <script src="js/shell.js?v=20260205"></script>
+    <script src="js/nav.js?v=20260205"></script>
+    <script src="js/walkthrough.js?v=20260205"></script>
+    <script src="js/vendor/chart.min.js?v=20260205"></script>
+    <script src="js/charting.js?v=20260205"></script>
+    <script src="js/portfolio.js?v=20260205"></script>
+    <script src="js/analytics.js?v=20260205"></script>
+    <script src="js/debug.js?v=20260205"></script>
+</head>
+<body class="text-white font-display min-h-screen relative">
+    <a href="#main-content" class="sr-only focus:not-sr-only focus:absolute focus:top-2 focus:left-4 bg-black text-white px-3 py-2 rounded">Skip to content</a>
+    <!-- Mode Modal -->
+    <div id="modeModal" class="fixed inset-0 bg-black/80 flex items-center justify-center z-50 hidden">
+        <div class="bg-panel-black p-6 rounded text-center space-y-4">
+            <p class="hologram-text">Select dashboard mode</p>
+            <div class="space-x-4">
+                <button id="modeBasic" class="px-4 py-2 bg-block-purple/20 text-block-purple rounded">Basic</button>
+                <button id="modeAdvanced" class="px-4 py-2 bg-block-purple/20 text-block-purple rounded">Advanced</button>
+            </div>
+        </div>
+    </div>
+    <div id="toastContainer" class="fixed top-4 right-4 space-y-2 z-50" aria-live="polite"></div>
+    <div id="wsReconnectBanner" class="hidden banner banner-offline fixed top-16 left-1/2 -translate-x-1/2 z-50 text-xs">Reconnecting… <span id="reconnect-count" class="chip">0</span></div>
+
+    <!-- Main Content -->
+    <main id="main-content" class="page-content">
+        <div class="flex items-center justify-between mb-3">
+            <div class="flex items-center gap-2 text-xs text-gray-300">
+                <span>Dashboard</span>
+                <span id="dashboard-stale" class="status-pill status-info">STALE</span>
+                <span id="gate-summary" class="micro-badge">gates —</span>
+            </div>
+            <div class="flex items-center gap-2 flex-wrap">
+                <span id="health-lag" class="micro-badge">feature lag —</span>
+                <span id="health-errors" class="micro-badge">errors —</span>
+                <span id="health-db" class="micro-badge">db wal —</span>
+                <span id="health-flush" class="micro-badge">flush —</span>
+                <span id="health-comp" class="micro-badge">comp —</span>
+                <span id="dashboard-updated" class="chip">Waiting for data</span>
+            </div>
+        </div>
+        <!-- Hero Strip -->
+        <section class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-6" id="hero-strip">
+            <div class="panel-blade p-4 flex items-center justify-between" data-panel="hero">
+                <div>
+                    <div class="text-xs text-gray-400 uppercase">Uptime</div>
+                    <div id="uptime" class="text-xl font-semibold text-white skeleton">—</div>
+                    <span class="chip mt-1 inline-block" id="uptime-updated">Waiting…</span>
+                </div>
+                <span class="status-pill" id="uptime-pill">CHECKING</span>
+            </div>
+            <div class="panel-blade p-4 flex items-center justify-between" data-panel="hero">
+                <div>
+                    <div class="text-xs text-gray-400 uppercase">Block Height</div>
+                    <div id="block-height" class="text-xl font-semibold text-white skeleton">—</div>
+                    <span class="chip mt-1 inline-block" id="block-updated">Waiting…</span>
+                </div>
+                <span class="status-pill status-good" id="network-pill">LIVE</span>
+            </div>
+            <div class="panel-blade p-4 flex items-center justify-between" data-panel="hero">
+                <div>
+                    <div class="text-xs text-gray-400 uppercase">Engine</div>
+                    <div id="engine-state" class="text-xl font-semibold text-white skeleton">—</div>
+                    <span class="chip mt-1 inline-block" id="engine-updated">Waiting…</span>
+                </div>
+                <span class="status-pill status-warn" id="engine-pill">PENDING</span>
+            </div>
+            <div class="panel-blade p-4 flex items-center justify-between" data-panel="hero">
+                <div>
+                    <div class="text-xs text-gray-400 uppercase">Wallet</div>
+                    <div id="wallet-status" class="text-xl font-semibold text-white skeleton">Monitoring</div>
+                    <div id="wallet-note" class="text-xs text-gray-500 mt-1">Connect this node's funded wallet (or an external wallet) to activate trading.</div>
+                    <span class="chip mt-1 inline-block" id="wallet-updated">Waiting…</span>
+                </div>
+                <span class="status-pill status-info" id="wallet-pill">CHECK</span>
+            </div>
+            <div class="panel-blade p-4 flex items-center justify-between" data-panel="hero">
+                <div>
+                    <div class="text-xs text-gray-400 uppercase">Market Gate</div>
+                    <div id="hero-market-gate" class="text-xl font-semibold text-white skeleton">Checking…</div>
+                    <div id="hero-market-gate-note" class="text-xs text-gray-400 mt-1">Awaiting status</div>
+                    <span class="chip mt-1 inline-block" id="hero-market-gate-updated">Waiting…</span>
+                </div>
+                <span class="status-pill status-info" id="hero-market-gate-pill">—</span>
+            </div>
+            <div class="panel-blade p-4 flex items-center justify-between" data-panel="hero">
+                <div>
+                    <div class="text-xs text-gray-400 uppercase">Net P&L</div>
+                    <div id="hero-net-pnl" class="text-xl font-semibold text-white skeleton">—</div>
+                    <div id="hero-net-pnl-change" class="text-xs text-blade-amber/70 mt-1">—</div>
+                    <span class="chip mt-1 inline-block" id="hero-net-pnl-updated">Waiting…</span>
+                </div>
+                <span class="status-pill status-info" id="hero-net-pnl-pill">—</span>
+            </div>
+        </section>
+
+        <section class="space-y-2 mb-6" id="portfolio-section">
+            <div class="flex items-center justify-between">
+                <div class="flex items-center gap-2">
+                    <h3 class="text-sm font-semibold text-gray-300 tracking-wide uppercase">Portfolio Pulse</h3>
+                    <span class="micro-badge" id="portfolio-source">/risk/portfolio —</span>
+                </div>
+                <span class="chip" id="portfolio-updated">Waiting…</span>
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                <div class="metric-card p-5 rounded scan-lines">
+                    <div class="flex items-center justify-between mb-2">
+                        <span class="text-sm hologram-text text-blade-amber/80">PORTFOLIO VALUE</span>
+                        <canvas id="sparkline" class="w-16 h-6"></canvas>
+                    </div>
+                    <div class="text-3xl font-bold amber-glow data-flicker" id="portfolioValue">—</div>
+                    <div class="text-sm hologram-text text-cyan-glow mt-1" id="portfolioChange">—</div>
+                </div>
+                <div class="metric-card p-5 rounded scan-lines">
+                    <div class="flex items-center justify-between mb-2">
+                        <span class="text-sm hologram-text text-blade-amber/80">REALIZED P&L</span>
+                        <svg class="w-12 h-6" viewBox="0 0 48 24">
+                            <path class="sparkline stroke-cyan-glow" d="M2 18 Q12 14 24 10 T46 6"/>
+                        </svg>
+                    </div>
+                    <div class="text-3xl font-bold cyan-glow data-flicker" id="realizedPnL">—</div>
+                    <div class="text-sm hologram-text text-blade-amber/80 mt-1" id="realizedPnLChange">—</div>
+                </div>
+                <div class="metric-card p-5 rounded scan-lines overflow-x-auto">
+                    <div class="flex items-center justify-between mb-2">
+                        <span class="text-sm hologram-text text-blade-amber/80">MARKET POSITIONS</span>
+                    </div>
+                    <canvas id="positionsMap" class="w-full h-12"></canvas>
+                </div>
+            </div>
+        </section>
+
+        <!-- Markets Grid -->
+        <section id="market-section" class="space-y-2 panel-hidden" data-panel="markets">
+            <div class="flex items-center justify-between">
+                <div class="flex items-center gap-2">
+                    <h3 class="text-sm font-semibold text-gray-300 tracking-wide uppercase">Markets</h3>
+                    <span class="micro-badge" id="markets-source">/theblock/dashboard —</span>
+                </div>
+                <span class="chip" id="markets-updated">Waiting…</span>
+            </div>
+            <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-2" id="market-grid">
+                <!-- Compute Market -->
+                <div class="panel-blade">
+                    <div class="flex items-center justify-between mb-2">
+                        <h3 class="text-sm font-semibold text-gray-400">COMPUTE MARKET</h3>
+                        <span class="text-xs px-2 py-1 bg-block-blue/20 text-block-blue rounded" id="compute-status">—</span>
+                    </div>
+                    <div class="text-2xl font-bold text-white mb-1 skeleton" id="compute-volume">---</div>
+                    <div class="text-xs text-gray-500">BLOCK Volume</div>
+                </div>
+
+                <!-- Storage Market -->
+                <div class="panel-blade">
+                    <div class="flex items-center justify-between mb-2">
+                        <h3 class="text-sm font-semibold text-gray-400">STORAGE MARKET</h3>
+                        <span class="text-xs px-2 py-1 bg-purple-500/20 text-purple-400 rounded" id="storage-status">—</span>
+                    </div>
+                    <div class="text-2xl font-bold text-white mb-1 skeleton" id="storage-volume">---</div>
+                    <div class="text-xs text-gray-500">BLOCK Volume</div>
+                </div>
+
+                <!-- Energy Market -->
+                <div class="panel-blade">
+                    <div class="flex items-center justify-between mb-2">
+                        <h3 class="text-sm font-semibold text-gray-400">ENERGY MARKET</h3>
+                        <span class="text-xs px-2 py-1 bg-block-green/20 text-block-green rounded" id="energy-status">—</span>
+                    </div>
+                    <div class="text-2xl font-bold text-white mb-1 skeleton" id="energy-volume">---</div>
+                    <div class="text-xs text-gray-500">BLOCK Volume</div>
+                </div>
+
+                <!-- Ad Market -->
+                <div class="panel-blade">
+                    <div class="flex items-center justify-between mb-2">
+                        <h3 class="text-sm font-semibold text-gray-400">AD MARKET</h3>
+                        <span class="text-xs px-2 py-1 bg-yellow-500/20 text-yellow-400 rounded" id="ad-status">—</span>
+                    </div>
+                    <div class="text-2xl font-bold text-white mb-1 skeleton" id="ad-volume">---</div>
+                    <div class="text-xs text-gray-500">BLOCK Volume</div>
+                </div>
+            </div>
+            <div id="market-empty" class="panel-blade p-4 hidden text-gray-400 text-sm">
+                Market data unavailable.
+            </div>
+        </section>
+
+        <section class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6" id="positions-section">
+            <div class="panel-blade p-5 scan-lines">
+                <div class="flex items-center justify-between mb-4">
+                    <h3 class="text-sm font-semibold text-gray-300 tracking-wide uppercase">Portfolio & Positions</h3>
+                    <div class="flex items-center gap-2">
+                        <button class="tab-button active" data-tab="positions">Positions</button>
+                        <button class="tab-button" data-tab="history">History</button>
+                    </div>
+                </div>
+                <div id="positionsTab" class="tab-content">
+                    <div id="positionsList" class="space-y-2 text-sm"></div>
+                </div>
+                <div id="historyTab" class="tab-content hidden">
+                    <div id="historyList" class="space-y-3"></div>
+                </div>
+            </div>
+            <div class="panel-blade p-5">
+                <div class="flex items-center justify-between mb-4">
+                    <h3 class="text-sm font-semibold text-gray-300 tracking-wide uppercase">Risk Snapshot</h3>
+                    <span class="micro-badge">/risk/portfolio —</span>
+                </div>
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <div class="text-xs text-gray-500 uppercase">Max Drawdown</div>
+                        <div class="text-lg font-semibold text-white" id="riskMaxDrawdown">—</div>
+                    </div>
+                    <div>
+                        <div class="text-xs text-gray-500 uppercase">Position Size</div>
+                        <div class="text-lg font-semibold text-white" id="positionSize">—</div>
+                    </div>
+                    <div>
+                        <div class="text-xs text-gray-500 uppercase">Leverage</div>
+                        <div class="text-lg font-semibold text-white" id="leverageRatio">—</div>
+                    </div>
+                    <div>
+                        <div class="text-xs text-gray-500 uppercase">Exposure</div>
+                        <div class="text-lg font-semibold text-white" id="exposure">—</div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section class="panel-blade p-5 mb-6 scan-lines">
+            <div class="flex items-center justify-between mb-4">
+                <div class="flex items-center gap-2">
+                    <h3 class="text-sm font-semibold text-gray-300 tracking-wide uppercase">Market P&L Breakdown</h3>
+                    <span id="pnl-markets-source" class="micro-badge">/pnl/markets —</span>
+                </div>
+                <div class="flex items-center gap-2">
+                    <span id="pnl-markets-updated" class="chip text-xs">Waiting…</span>
+                    <button id="pnl-markets-refresh" class="micro-badge">Refresh</button>
+                </div>
+            </div>
+            <canvas id="marketPnlChart" height="220"></canvas>
+            <div id="marketPnlSummary" class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3 mt-4"></div>
+            <div class="flex items-center justify-between text-xs text-gray-300 mt-3 gap-4 flex-wrap">
+                <div id="marketGateSummary">Active markets • Awaiting data</div>
+                <span id="market-gates-source" class="micro-badge">/market/active —</span>
+            </div>
+        </section>
+
+        <!-- Charts Row -->
+        <section id="charts-section" class="space-y-2 panel-hidden" data-panel="charts">
+            <div class="flex items-center justify-between mb-1">
+                <div class="flex items-center gap-2">
+                    <h3 class="text-sm font-semibold text-gray-300 tracking-wide uppercase">Charts</h3>
+                    <span class="micro-badge" id="charts-source">/theblock/dashboard —</span>
+                </div>
+                <button id="charts-retry" class="micro-badge">retry</button>
+            </div>
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-2">
+                <!-- Network Activity Chart -->
+                <div class="panel-blade">
+                    <div class="flex items-center justify-between mb-4">
+                        <h3 class="text-sm font-semibold text-gray-400">NETWORK ACTIVITY</h3>
+                        <span class="chip" id="network-chart-updated">Waiting…</span>
+                    </div>
+                    <canvas id="networkChart" height="200"></canvas>
+                </div>
+
+                <!-- Market Distribution Chart -->
+                <div class="panel-blade">
+                    <div class="flex items-center justify-between mb-4">
+                        <h3 class="text-sm font-semibold text-gray-400">MARKET DISTRIBUTION</h3>
+                        <span class="chip" id="market-chart-updated">Waiting…</span>
+                    </div>
+                    <canvas id="marketChart" height="200"></canvas>
+                </div>
+            </div>
+        </section>
+
+        <!-- Recent Activity -->
+        <section class="panel-blade p-4 panel-hidden" id="receipts-section" data-panel="receipts">
+            <div class="flex items-center justify-between mb-4">
+                <div class="flex items-center gap-2">
+                    <h3 class="text-sm font-semibold text-gray-400">RECENT RECEIPTS</h3>
+                    <span class="micro-badge" id="receipts-source">/theblock/dashboard —</span>
+                </div>
+                <div class="flex items-center gap-2">
+                    <button id="receipts-retry" class="micro-badge">retry</button>
+                    <span class="chip hidden sm:inline" id="receipts-updated">Waiting…</span>
+                </div>
+            </div>
+            <div class="hidden md:block overflow-x-auto" id="receipts-table-wrapper">
+                <table class="w-full text-left text-sm sticky-header">
+                    <thead>
+                        <tr class="text-gray-400 border-b border-gray-700">
+                            <th class="pb-2">Block</th>
+                            <th class="pb-2">Market</th>
+                            <th class="pb-2">Provider</th>
+                            <th class="pb-2">Amount</th>
+                            <th class="pb-2">Status</th>
+                        </tr>
+                    </thead>
+                    <tbody id="receipts-table">
+                        <tr>
+                            <td colspan="5" class="text-center text-gray-500 py-4">Loading receipts...</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+            <div class="space-y-3 md:hidden" id="receipts-accordion">
+                <div class="receipt-card">
+                    <div class="text-center text-gray-500 py-2">Loading receipts...</div>
+                </div>
+            </div>
+        </section>
+        <div id="error-drawer" class="panel-blade p-4 mt-4 hidden" aria-live="polite">
+            <div class="flex items-center justify-between mb-2">
+                <h3 class="text-sm font-semibold text-gray-300">Recent Errors</h3>
+                <button id="error-clear" class="micro-badge">clear</button>
+            </div>
+            <ul id="error-list" class="text-xs text-gray-400 space-y-1"></ul>
+        </div>
+        <div id="coming-soon" class="panel-blade p-4 mt-4 hidden">
+            <h3 class="text-sm font-semibold text-gray-300 mb-2">Coming soon</h3>
+            <p class="text-sm text-gray-400">This panel is waiting on live API data. See <span class="underline">dashboard_api_audit.md</span> for the wiring checklist.</p>
+        </div>
+    </main>
+
+    <script>
+        const panelAvailability = { markets: null, charts: null, receipts: null };
+        const latencyPoints = [];
+        let latencyChart = null;
+        let wsRef = null;
+        const state = { retries: 0, lastUpdated: null, isStale: true, dashRetry: 0 };
+        const errorLog = [];
+        let lastDashLatency = null;
+        let schemaHash = null;
+        let marketPnlChart = null;
+        let marketPnlInterval = null;
+        const marketPnlColors = {
+            COMPUTE: '#00e5ff',
+            STORAGE: '#c084fc',
+            ENERGY: '#22c55e',
+            AD: '#f97316',
+        };
+        const fallbackPnlColors = ['#38bdf8', '#fb7185', '#34d399', '#818cf8'];
+
+        function toggleSkeleton(ids = [], on = false) {
+            ids.forEach(id => {
+                const el = document.getElementById(id);
+                if (!el) return;
+                el.classList.toggle('skeleton', on);
+                if (!on) el.classList.add('fade-in');
+            });
+        }
+
+        function logError(endpoint, status) {
+            const entry = { endpoint, status, ts: Date.now() };
+            errorLog.unshift(entry);
+            if (errorLog.length > 3) errorLog.pop();
+            const list = document.getElementById('error-list');
+            const drawer = document.getElementById('error-drawer');
+            if (list && drawer) {
+                list.innerHTML = errorLog
+                    .map(e => `<li>${new Date(e.ts).toLocaleTimeString()} · ${e.endpoint} · ${e.status}</li>`)
+                    .join('') || '<li>No errors</li>';
+                drawer.classList.toggle('hidden', errorLog.length === 0);
+            }
+            pushToast(`${endpoint} failed (${status})`, 'warn', { context: endpoint });
+        }
+
+        function setSource(id, endpoint, latency) {
+            const el = document.getElementById(id);
+            if (!el) return;
+            const latencyLabel = typeof latency === 'number' ? `${latency} ms` : '—';
+            el.textContent = `${endpoint} • ${latencyLabel}`;
+        }
+
+        function hexToRgba(hex, alpha = 0.3) {
+            if (!hex || !hex.startsWith('#')) return hex;
+            const clean = hex.replace('#', '');
+            const bigint = parseInt(clean, 16);
+            const r = (bigint >> 16) & 255;
+            const g = (bigint >> 8) & 255;
+            const b = bigint & 255;
+            return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+        }
+
+        function formatAmount(amount) {
+            if (amount === undefined || amount === null || isNaN(amount)) return '—';
+            return Number(amount).toLocaleString();
+        }
+
+        function setStatusPill(pillId, state, label) {
+            const pill = document.getElementById(pillId);
+            if (!pill) return;
+            pill.classList.remove('status-good', 'status-warn', 'status-bad', 'status-info');
+            switch (state) {
+                case 'good':
+                    pill.classList.add('status-good');
+                    break;
+                case 'warn':
+                    pill.classList.add('status-warn');
+                    break;
+                case 'bad':
+                    pill.classList.add('status-bad');
+                    break;
+                default:
+                    pill.classList.add('status-info');
+            }
+            if (label) pill.textContent = label;
+        }
+
+        function stamp(id, ts = Date.now()) {
+            const el = document.getElementById(id);
+            if (el) el.textContent = `Updated ${new Date(ts).toLocaleTimeString()}`;
+        }
+
+        function markControlsStale(isStale) {
+            if (state.isStale !== isStale) {
+                emitClientFlip(isStale ? 'dashboard_stale' : 'dashboard_fresh', `${API_BASE || ''}`);
+                state.isStale = isStale;
+            }
+            document.querySelectorAll('[data-control]').forEach(el => el.classList.toggle('is-stale', isStale));
+            const pill = document.getElementById('dashboard-stale');
+            if (pill) {
+                setStatusPill('dashboard-stale', isStale ? 'warn' : 'good', isStale ? 'STALE' : 'FRESH');
+            }
+            document.body.classList.toggle('is-stale', isStale);
+        }
+
+        function updateFallback() {
+            const fallback = document.getElementById('coming-soon');
+            if (!fallback) return;
+            const tried = Object.values(panelAvailability).every(v => v !== null);
+            const missing = Object.values(panelAvailability).some(v => v === false);
+            fallback.classList.toggle('hidden', !(tried && missing));
+        }
+
+        function setPanelAvailable(panel, ok) {
+            panelAvailability[panel] = ok;
+            const el = document.querySelector(`[data-panel="${panel}"]`);
+            if (el) {
+                el.classList.toggle('is-stale', !ok);
+                el.classList.toggle('panel-hidden', false);
+            }
+            updateFallback();
+        }
+
+        function renderReceipts(receipts) {
+            const tableBody = document.getElementById('receipts-table');
+            const cardsContainer = document.getElementById('receipts-accordion');
+            if (!tableBody || !cardsContainer) return;
+
+            if (!receipts || receipts.length === 0) {
+                tableBody.innerHTML = `<tr><td colspan="5" class="text-center text-gray-500 py-4">No receipts yet</td></tr>`;
+                cardsContainer.innerHTML = `<div class="receipt-card"><div class="text-center text-gray-500 py-2">No receipts yet</div></div>`;
+                setPanelAvailable('receipts', true);
+                stamp('receipts-updated');
+                return;
+            }
+
+            tableBody.innerHTML = '';
+            cardsContainer.innerHTML = '';
+
+            receipts.forEach((r) => {
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td class="py-2">${r.block ?? '—'}</td>
+                    <td class="py-2">${r.market ?? '—'}</td>
+                    <td class="py-2">${r.provider ?? '—'}</td>
+                    <td class="py-2">${formatAmount(r.amount)} BLOCK</td>
+                    <td class="py-2">${r.status ?? '—'}</td>
+                `;
+                tableBody.appendChild(tr);
+
+                const card = document.createElement('div');
+                card.className = 'receipt-card';
+                card.innerHTML = `
+                    <div class="flex items-center justify-between mb-1">
+                        <div class="text-sm font-semibold text-white">${r.market ?? '—'}</div>
+                        <span class="status-pill status-info">${r.status ?? '—'}</span>
+                    </div>
+                    <div class="text-xs text-gray-400">Block ${r.block ?? '—'} · Provider ${r.provider ?? '—'}</div>
+                    <div class="text-lg font-semibold text-white mt-1">${formatAmount(r.amount)} BLOCK</div>
+                `;
+                cardsContainer.appendChild(card);
+            });
+
+            stamp('receipts-updated');
+            setSource('receipts-source', '/theblock/dashboard', lastDashLatency);
+            setPanelAvailable('receipts', true);
+        }
+
+        function renderCharts(data) {
+            try {
+                const series = data.network?.activity || [];
+                const lagMs = data.health?.feature_lag_seconds ? Math.round(data.health.feature_lag_seconds * 1000) : null;
+                const errs60 = data.health?.recent_errors?.last_60s ?? 0;
+                const lagBadge = document.getElementById('net-lag');
+                const errBadge = document.getElementById('net-errors');
+                if (lagBadge) {
+                    lagBadge.textContent = lagMs !== null ? `lag ${lagMs}ms` : 'lag —';
+                    lagBadge.classList.toggle('warn', lagMs !== null && lagMs > 8000);
+                }
+                if (errBadge) {
+                    errBadge.textContent = `${errs60} errs/60s`;
+                    errBadge.classList.toggle('warn', errs60 > 0);
+                }
+                buildChart(
+                    'networkActivity',
+                    'networkChart',
+                    {
+                        type: 'line',
+                        data: {
+                            labels: series.map(p => new Date(p.t * 1000).toLocaleTimeString()),
+                            datasets: [
+                                {
+                                    label: 'TPS',
+                                    data: series.map(p => p.value),
+                                    borderColor: '#00e5ff',
+                                    fill: false,
+                                    tension: 0.25,
+                                },
+                            ],
+                        },
+                        options: { plugins: { legend: { display: false } }, scales: { x: { display: false }, y: { beginAtZero: true } }, animation: false },
+                    },
+                    { emptyMessage: 'No network activity yet', maxPoints: 120 }
+                );
+                stamp('network-chart-updated');
+            } catch (e) {
+                setPanelAvailable('charts', false);
+                return;
+            }
+
+            try {
+                if (Array.isArray(data.markets)) {
+                    const labels = data.markets.map(m => m.market.toUpperCase());
+                    const values = data.markets.map(m => m.volume_block || 0);
+                    const colors = ['#00e5ff', '#a78bfa', '#10b981', '#f59e0b'];
+                    buildChart(
+                        'marketDistribution',
+                        'marketChart',
+                        {
+                            type: 'doughnut',
+                            data: { labels, datasets: [{ data: values, backgroundColor: colors.slice(0, labels.length) }] },
+                            options: { plugins: { legend: { position: 'bottom' } }, cutout: '60%' },
+                        },
+                        { emptyMessage: 'No market data' }
+                    );
+                    stamp('market-chart-updated');
+                    setPanelAvailable('charts', true);
+                } else {
+                    setPanelAvailable('charts', false);
+                }
+            } catch (e) {
+                setPanelAvailable('charts', false);
+            }
+        }
+
+        function renderMarkets(markets) {
+            if (Array.isArray(markets) && markets.length > 0) {
+                markets.forEach(market => {
+                    const vol = document.getElementById(`${market.market}-volume`);
+                    if (vol) vol.textContent = `${formatAmount(market.volume_block)} BLOCK`;
+                    const status = document.getElementById(`${market.market}-status`);
+                    if (status) status.textContent = (market.status || 'ACTIVE').toUpperCase();
+                });
+                stamp('markets-updated');
+                toggleSkeleton(['compute-volume','storage-volume','energy-volume','ad-volume'], false);
+                setSource('markets-source', '/theblock/dashboard', lastDashLatency);
+                setPanelAvailable('markets', true);
+            } else {
+                setPanelAvailable('markets', false);
+            }
+        }
+
+        function renderGateSummary(gates) {
+            const badge = document.getElementById('gate-summary');
+            if (!badge) return;
+            if (!Array.isArray(gates) || gates.length === 0) {
+                badge.textContent = 'gates —';
+                badge.classList.remove('good','warn');
+                return;
+            }
+            const closed = gates.filter(g => (g.state || '').toLowerCase() !== 'trade');
+            badge.textContent = closed.length === 0 ? 'gates open' : `${closed.length} gated`;
+            badge.classList.toggle('good', closed.length === 0);
+            badge.classList.toggle('warn', closed.length > 0);
+            const heroGateEl = document.getElementById('hero-market-gate');
+            const heroGateNote = document.getElementById('hero-market-gate-note');
+            if (heroGateEl) heroGateEl.textContent = closed.length === 0 ? 'Market gates open' : `${closed.length} markets gated`;
+            if (heroGateNote) heroGateNote.textContent = closed.length === 0 ? 'Trade mode' : 'Some markets are gated';
+            setStatusPill('hero-market-gate-pill', closed.length === 0 ? 'good' : 'bad', closed.length === 0 ? 'OPEN' : 'GATED');
+            stamp('hero-market-gate-updated');
+        }
+
+        function updateHero(data) {
+            const now = Date.now();
+            if (data.network) {
+                const height = data.network.block_height;
+                document.getElementById('block-height').textContent = height ? height.toLocaleString() : '—';
+                document.getElementById('network-label').textContent = data.network.status || 'Connected';
+                setStatusPill('network-pill', data.network.status === 'Connected' ? 'good' : 'warn', data.network.status ? data.network.status.toUpperCase() : 'CHECK');
+                stamp('block-updated', now);
+                if (data.network.uptime_seconds !== undefined) {
+                    const hrs = Math.floor(data.network.uptime_seconds / 3600);
+                    const mins = Math.floor((data.network.uptime_seconds % 3600) / 60);
+                    document.getElementById('uptime').textContent = `${hrs}h ${mins}m`;
+                    setStatusPill('uptime-pill', 'good', 'LIVE');
+                    stamp('uptime-updated', now);
+                }
+                const indicator = document.getElementById('network-indicator');
+                if (indicator) indicator.className = `w-2 h-2 rounded-full ${data.network.status === 'Connected' ? 'bg-block-green' : 'bg-red-500'}`;
+            }
+            if (data.engine) {
+                const running = data.engine.running ?? data.engine.active;
+                document.getElementById('engine-state').textContent = running ? 'RUNNING' : 'PAUSED';
+                setStatusPill('engine-pill', running ? 'good' : 'warn', running ? 'RUNNING' : 'PAUSED');
+                stamp('engine-updated', now);
+            }
+            if (data.wallet) updateWalletStatus(data.wallet);
+            toggleSkeleton(['block-height','uptime','engine-state','wallet-status'], false);
+            if (data.accounting) {
+                const heroPnlEl = document.getElementById('hero-net-pnl');
+                const heroChangeEl = document.getElementById('hero-net-pnl-change');
+                const totalPnl = data.accounting.pnl?.total ?? 0;
+                const balanceChange = data.accounting.balance?.change ?? 0;
+                const balancePct = data.accounting.balance?.change_pct ?? 0;
+                if (heroPnlEl) heroPnlEl.textContent = formatBlock(totalPnl);
+                if (heroChangeEl) heroChangeEl.textContent = `${formatBlockChange(balanceChange)} (${formatPercent(balancePct)})`;
+                setStatusPill('hero-net-pnl-pill', totalPnl >= 0 ? 'good' : 'warn', totalPnl >= 0 ? 'PROFIT' : 'LOSS');
+                stamp('hero-net-pnl-updated', now);
+            }
+        }
+
+        function shorten(addr) {
+            if (!addr || typeof addr !== 'string') return '';
+            return addr.length <= 10 ? addr : `${addr.slice(0, 5)}…${addr.slice(-4)}`;
+        }
+
+        function updateWalletStatus(info) {
+            const statusEl = document.getElementById('wallet-status');
+            const noteEl = document.getElementById('wallet-note');
+            const updatedEl = document.getElementById('wallet-updated');
+            const pillId = 'wallet-pill';
+            const connected = info?.connected ?? !!info?.wallet;
+            const balance = info?.balance_block ?? info?.balance ?? null;
+            const funded = typeof balance === 'number' ? balance > 0 : (info?.funded ?? false);
+            const mode = (info?.mode || 'monitor').toUpperCase();
+            if (statusEl) statusEl.textContent = connected ? (funded ? 'Funded' : 'Wallet linked') : 'Monitoring';
+            if (noteEl) noteEl.textContent = connected
+                ? `${shorten(info.wallet || 'wallet')} • ${funded ? 'ready to trade' : 'fund wallet to trade'}`
+                : 'Connect a funded wallet to trade; monitoring stays available without a wallet.';
+            setStatusPill(pillId, funded ? 'good' : (connected ? 'warn' : 'info'), funded ? 'READY' : (connected ? 'CONNECT' : mode));
+            if (updatedEl) updatedEl.textContent = `Updated ${new Date().toLocaleTimeString()}`;
+        }
+
+        const walLagPoints = [];
+
+        function renderHealthExtras(health) {
+            if (!health) return;
+            const lagSeconds = health.feature_lag_seconds ?? (health.feature_lag_ms ? health.feature_lag_ms / 1000 : null) ?? health.feature_lag ?? null;
+            const lagMs = lagSeconds !== null ? Math.round(Number(lagSeconds) * 1000) : null;
+            const errsObj = health.recent_errors;
+            const errs = typeof errsObj === 'object' && errsObj !== null ? errsObj.total ?? errsObj.last_60s ?? errsObj.last_5m : (health.recent_errors ?? health.recent_error_count ?? null);
+            const db = health.simple_db || health.simpledb || {};
+            const lagEl = document.getElementById('health-lag');
+            if (lagEl) lagEl.textContent = lagMs !== null ? `feature lag ${lagMs}ms` : 'feature lag —';
+            const errEl = document.getElementById('health-errors');
+            if (errEl) {
+                const suffix = errsObj?.last_60s ? ` (${errsObj.last_60s}/60s)` : '';
+                errEl.textContent = errs !== null ? `errors ${errs}${suffix}` : 'errors —';
+            }
+            const dbEl = document.getElementById('health-db');
+            const flushEl = document.getElementById('health-flush');
+            const compEl = document.getElementById('health-comp');
+            if (dbEl) {
+                const wal = db.wal_fsync_lag_seconds ?? db.wal_fsync_ms ?? db.wal_fsync_lag_ms ?? null;
+                const flush = db.flush_lag_seconds ?? db.flush_lag_ms ?? null;
+                const comp = db.compaction_queue ?? db.compaction_pending ?? db.compaction_backlog ?? '—';
+                const walLabel = wal !== null ? `${Math.round((wal ?? 0) * 1000)}ms` : '—';
+                const flushLabel = flush !== null ? `${Math.round((flush ?? 0) * 1000)}ms` : '—';
+                dbEl.textContent = `db wal ${walLabel}`;
+                if (flushEl) flushEl.textContent = `flush ${flushLabel}`;
+                if (compEl) compEl.textContent = `comp ${typeof comp === 'number' ? `${comp} queued` : comp}`;
+                if (wal !== null) {
+                    walLagPoints.push(Math.round((wal ?? 0) * 1000));
+                    if (walLagPoints.length > 20) walLagPoints.shift();
+                }
+            }
+            if (lagMs !== null) updateLatencySparkline(lagMs, walLagPoints.at(-1));
+        }
+
+        function updateDashboard(data) {
+            state.lastUpdated = Date.now();
+            const dashUpd = document.getElementById('dashboard-updated');
+            if (dashUpd) dashUpd.textContent = `Updated ${new Date(state.lastUpdated).toLocaleTimeString()}`;
+            markControlsStale(false);
+            updateHero(data);
+            renderMarkets(data.markets);
+            if (data.receipts) renderReceipts(data.receipts);
+            renderCharts(data);
+            setSource('charts-source', '/theblock/dashboard', lastDashLatency);
+            renderHealthExtras(data.health);
+            if (data.gates) renderGateSummary(data.gates);
+            if (data.wallet) updateWalletStatus(data.wallet);
+        }
+
+        function updateLatencySparkline(latency, walLagMs) {
+            const canvas = document.getElementById('latencySparkline');
+            if (!canvas || typeof latency !== 'number') return;
+            latencyPoints.push(latency);
+            if (latencyPoints.length > 20) latencyPoints.shift();
+            if (typeof walLagMs === 'number') {
+                walLagPoints.push(walLagMs);
+                if (walLagPoints.length > 20) walLagPoints.shift();
+            }
+            if (!latencyChart) {
+                latencyChart = buildChart(
+                    'latencySparkline',
+                    'latencySparkline',
+                    {
+                        type: 'line',
+                        data: { labels: latencyPoints.map((_, i) => i), datasets: [
+                            { data: [...latencyPoints], label: 'RPC', borderColor: '#22c55e', fill: false, tension: 0.25 },
+                            { data: [...walLagPoints], label: 'WAL lag', borderColor: '#f59e0b', fill: false, tension: 0.25 }
+                        ] },
+                        options: { plugins: { legend: { display: true, labels: { color: '#e2e8f0', boxWidth: 10, boxHeight: 8, font: { size: 10 } } } }, scales: { x: { display: false }, y: { display: false } }, animation: false },
+                    },
+                    { allowEmpty: true, maxPoints: 20 }
+                );
+                return;
+            }
+            batchChartUpdate('latencySparkline', () => {
+                latencyChart.data.labels = latencyPoints.map((_, i) => i);
+                latencyChart.data.datasets[0].data = [...latencyPoints];
+                if (latencyChart.data.datasets[1]) {
+                    latencyChart.data.datasets[1].data = [...walLagPoints];
+                }
+                trimChartPoints(latencyChart, 20);
+                latencyChart.update('none');
+            });
+        }
+
+        async function pollHealth() {
+            const headers = API_KEY ? { 'X-API-Key': API_KEY } : {};
+            const start = performance.now();
+            try {
+                const res = await fetch(`${API_BASE}/health`, { headers, cache: 'no-store' });
+                if (!res.ok) throw new Error('health failed');
+                const data = await res.json();
+                const latency = data.rpc_latency_ms ?? Math.round(performance.now() - start);
+                data.health = data; // pass through to renderCharts
+                const walLagMs = data.db_wal_fsync_lag_seconds ? Math.round(data.db_wal_fsync_lag_seconds * 1000) : undefined;
+                updateLatencySparkline(latency, walLagMs);
+                const label = document.getElementById('network-label');
+                if (label) label.textContent = `Connected · ${latency.toFixed(0)}ms`;
+                setStatusPill('network-pill', 'good', 'LIVE');
+                if (latency > 8000) {
+                    document.body.classList.add('is-lagged');
+                } else {
+                    document.body.classList.remove('is-lagged');
+                }
+                renderCharts({ network: { activity: [] }, health: data });
+                renderHealthExtras(data);
+                if (data.uptime_seconds) {
+                    const hrs = Math.floor(data.uptime_seconds / 3600);
+                    const mins = Math.floor((data.uptime_seconds % 3600) / 60);
+                    const uptimeEl = document.getElementById('uptime');
+                    if (uptimeEl) uptimeEl.textContent = `${hrs}h ${mins}m`;
+                    stamp('uptime-updated', new Date());
+                }
+                if (typeof data.recent_errors !== 'undefined') {
+                    document.getElementById('engine-state')?.textContent = `${data.recent_errors} errs`;
+                }
+                stamp('dashboard-updated', new Date());
+            } catch (e) {
+                logError('/health', e.message || 'error');
+                handleDisconnect();
+            }
+        }
+
+        function handleDisconnect() {
+            state.retries += 1;
+            const banner = document.getElementById('wsReconnectBanner');
+            const count = document.getElementById('reconnect-count');
+            if (banner) banner.classList.remove('hidden');
+            if (count) count.textContent = String(state.retries);
+            setStatusPill('network-pill', 'bad', 'DOWN');
+            markControlsStale(true);
+            setTimeout(connectSocket, Math.min(5000 * state.retries, 15000));
+        }
+
+        async function loadWalletStatus() {
+            const headers = API_KEY ? { 'X-API-Key': API_KEY } : {};
+            try {
+                const res = await fetch(`${API_BASE}/wallet/status`, { headers, cache: 'no-store' });
+                if (!res.ok) throw new Error(`wallet ${res.status}`);
+                const data = await res.json();
+                updateWalletStatus(data);
+            } catch (_) {
+                // Endpoint optional; stay quiet if missing
+            }
+        }
+
+        async function loadMarketPnlBreakdown() {
+            const headers = API_KEY ? { 'X-API-Key': API_KEY } : {};
+            try {
+                const { res, latencyMs } = await fetchWithTiming(`${API_BASE}/pnl/markets?limit=48`, { headers, cache: 'no-store' });
+                if (!res.ok) throw new Error(`pnl/markets ${res.status}`);
+                const payload = await res.json();
+                const series = payload.series || [];
+                const markets = payload.markets || [];
+                if (!series.length) {
+                    destroyChart('marketPnl');
+                    setSource('pnl-markets-source', '/pnl/markets', latencyMs);
+                    document.getElementById('pnl-markets-updated')?.textContent = 'Waiting…';
+                    return;
+                }
+                const labels = series.map(entry => new Date(entry.timestamp || Date.now()).toLocaleTimeString());
+                const datasets = markets.map((market, idx) => {
+                    const color = marketPnlColors[market] || fallbackPnlColors[idx % fallbackPnlColors.length];
+                    return {
+                        label: market,
+                        data: series.map(entry => entry.markets?.[market] ?? 0),
+                        borderColor: color,
+                        backgroundColor: hexToRgba(color, 0.25),
+                        tension: 0.35,
+                        fill: true,
+                    };
+                });
+                marketPnlChart = buildChart(
+                    'marketPnl',
+                    'marketPnlChart',
+                    {
+                        type: 'line',
+                        data: { labels, datasets },
+                        options: {
+                            plugins: {
+                                legend: { position: 'top', labels: { color: '#e2e8f0' } },
+                                tooltip: { mode: 'index', intersect: false },
+                            },
+                            scales: { x: { display: false }, y: { ticks: { color: '#9ca3af' } } },
+                        },
+                    },
+                    { emptyMessage: 'Awaiting accounting data', maxPoints: 48 }
+                );
+                renderMarketPnlSummary(series, markets);
+                setSource('pnl-markets-source', '/pnl/markets', latencyMs);
+                const stampEl = document.getElementById('pnl-markets-updated');
+                if (stampEl) stampEl.textContent = `Updated ${new Date().toLocaleTimeString()}`;
+            } catch (e) {
+                logError('/pnl/markets', e.message || 'error');
+            }
+        }
+
+        async function fetchInitial() {
+            const headers = API_KEY ? { 'X-API-Key': API_KEY } : {};
+            try {
+                const { res, latencyMs } = await fetchWithTiming(`${API_BASE}/theblock/dashboard`, { headers, cache: 'no-store' });
+                lastDashLatency = latencyMs;
+                if (!res.ok) throw new Error(`dash fetch failed (${res.status})`);
+                const data = await res.json();
+                // fetch manifest/schema hash alongside to guard drift
+                try {
+                    const man = await fetchWithTiming(`${API_BASE}/manifest`, { headers, cache: 'no-store' });
+                    if (man.res.ok) {
+                        const manifest = await man.res.json();
+                        if (manifest?.schema_hash) {
+                            const chip = document.getElementById('dashboard-updated');
+                            chip && (chip.textContent = `Schema ${manifest.schema_hash.slice(0,8)}`);
+                            const prev = localStorage.getItem('block_buster_schema_hash');
+                            schemaHash = manifest.schema_hash;
+                            localStorage.setItem('block_buster_schema_hash', schemaHash);
+                            if (prev && prev !== schemaHash) {
+                                pushToast('Schema changed, refresh recommended', 'warn', { context: '/manifest' });
+                                setStatusPill('dashboard-stale', 'warn', 'SCHEMA DRIFT');
+                            }
+                            data.manifest = manifest;
+                        }
+                        setSource('charts-source', '/manifest', man.latencyMs);
+                    }
+                } catch (e) {
+                    logError('/manifest', e.message || 'error');
+                }
+                setSource('markets-source', '/theblock/dashboard', latencyMs);
+                setSource('receipts-source', '/theblock/dashboard', latencyMs);
+                updateDashboard(data);
+                loadMarketPnlBreakdown();
+                if (marketPnlInterval) clearInterval(marketPnlInterval);
+                marketPnlInterval = setInterval(loadMarketPnlBreakdown, 15000);
+                state.dashRetry = 0;
+            } catch (err) {
+                console.error('Failed to load dashboard:', err);
+                logError('/theblock/dashboard', err.message || 'error');
+                setPanelAvailable('markets', false);
+                setPanelAvailable('charts', false);
+                setPanelAvailable('receipts', false);
+                markControlsStale(true);
+                state.dashRetry += 1;
+                const delay = Math.min(16000, 1500 * Math.pow(2, state.dashRetry));
+                setTimeout(fetchInitial, delay);
+            }
+        }
+
+        function connectSocket() {
+            try {
+                if (wsRef) wsRef.close();
+                const wsUrl = API_BASE.replace(/^http/i, 'ws') + '/theblock/ws';
+                wsRef = new WebSocket(wsUrl);
+                wsRef.onopen = () => {
+                    state.retries = 0;
+                    const banner = document.getElementById('wsReconnectBanner');
+                    if (banner) banner.classList.add('hidden');
+                };
+                wsRef.onmessage = (event) => {
+                    try {
+                        const data = JSON.parse(event.data);
+                        updateDashboard(data);
+                    } catch (e) {
+                        console.error('ws parse failed', e);
+                    }
+                };
+                wsRef.onerror = handleDisconnect;
+                wsRef.onclose = handleDisconnect;
+            } catch (e) {
+                console.error('WebSocket error', e);
+                handleDisconnect();
+            }
+        }
+
+        function connectFeatureRail() {
+            if (!window.connectFeatureStream) return;
+            window.connectFeatureStream('/features/stream', {
+                onData: (msg) => {
+                    if (msg.feature_lag_ms || msg.feature_lag) {
+                        const lag = msg.feature_lag_ms ?? msg.feature_lag;
+                        renderHealthExtras({ feature_lag_ms: lag });
+                        updateLatencySparkline(Number(lag));
+                    }
+                    if (msg.recent_errors !== undefined) {
+                        renderHealthExtras({ recent_errors: msg.recent_errors });
+                    }
+                    if (msg.simple_db) {
+                        renderHealthExtras({ simple_db: msg.simple_db });
+                    }
+                }
+            });
+        }
+
+        function checkStaleness() {
+            if (!state.lastUpdated) return;
+            const stale = Date.now() - state.lastUpdated > 12000;
+            markControlsStale(stale);
+            if (stale) {
+                setStatusPill('network-pill', 'warn', 'STALE');
+                const dashUpd = document.getElementById('dashboard-updated');
+                if (dashUpd) dashUpd.textContent = 'Shadow mode (cached)';
+            }
+        }
+
+        // Initialize dashboard
+        document.addEventListener('DOMContentLoaded', function() {
+            applyChartTheme && applyChartTheme();
+            try {
+                const baseUrl = new URL(API_BASE);
+                const cluster = document.getElementById('cluster-chip');
+                if (cluster) cluster.textContent = `Cluster: ${baseUrl.hostname}`;
+            } catch {}
+            markControlsStale(true);
+            fetchInitial();
+            connectSocket();
+            connectFeatureRail();
+            pollHealth();
+            loadWalletStatus();
+            setInterval(pollHealth, 8000);
+            setInterval(loadWalletStatus, 20000);
+            setInterval(checkStaleness, 4000);
+            document.getElementById('receipts-retry')?.addEventListener('click', fetchInitial);
+            document.getElementById('charts-retry')?.addEventListener('click', fetchInitial);
+            document.getElementById('error-clear')?.addEventListener('click', () => {
+                errorLog.length = 0;
+                const drawer = document.getElementById('error-drawer');
+                const list = document.getElementById('error-list');
+                if (drawer) drawer.classList.add('hidden');
+                if (list) list.innerHTML = '';
+            });
+            document.getElementById('pnl-markets-refresh')?.addEventListener('click', () => {
+                loadMarketPnlBreakdown();
+                if (marketPnlInterval) clearInterval(marketPnlInterval);
+                marketPnlInterval = setInterval(loadMarketPnlBreakdown, 15000);
+            });
+        });
+
+    </script>
+    <script src="js/footer.js?v=20260205"></script>
+</body>
+</html>

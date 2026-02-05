@@ -1,0 +1,162 @@
+# Feature specification for The Block markets
+# Based on integration plan section 7.2
+version: 0x02
+features:
+  # Market utilization metrics (0-3)
+  - index: 0
+    name: compute_util
+    category: market
+    description: Compute market utilization (0-1 normalized)
+    receipt_types: [Compute]
+    unit: ratio
+    normalization: zscore
+  - index: 1
+    name: storage_util
+    category: market
+    description: Storage market utilization
+    receipt_types: [Storage]
+    unit: ratio
+    normalization: zscore
+  - index: 2
+    name: energy_util
+    category: market
+    description: Energy market utilization
+    receipt_types: [Energy]
+    unit: ratio
+    normalization: zscore
+  - index: 3
+    name: ad_util
+    category: market
+    description: Ad market utilization
+    receipt_types: [Ad]
+    unit: ratio
+    normalization: zscore
+  
+  # Economics metrics (4-5)
+  - index: 4
+    name: compute_margin
+    category: economics
+    description: Provider margin in compute market (ppm / 1M)
+    receipt_types: [Compute]
+    unit: ratio
+    normalization: zscore
+  - index: 5
+    name: storage_margin
+    category: economics
+    description: Storage provider margin
+    receipt_types: [Storage]
+    unit: ratio
+    normalization: zscore
+  
+  # Activity metrics (6)
+  - index: 6
+    name: receipt_velocity
+    category: activity
+    description: Receipts per 100 blocks (EMA)
+    receipt_types: [Compute, Storage, Energy, Ad]
+    unit: per_block
+    normalization: zscore
+  
+  # Quality metrics (7)
+  - index: 7
+    name: job_success_rate
+    category: quality
+    description: Compute job success rate (0-1)
+    receipt_types: [Compute]
+    unit: ratio
+    normalization: zscore
+  
+  # Governance metrics (8-9)
+  - index: 8
+    name: gate_compute
+    category: governance
+    description: 1.0 if compute gate=Trade, else 0.0
+    receipt_types: []
+    unit: binary
+    normalization: raw
+  - index: 9
+    name: gate_storage
+    category: governance
+    description: 1.0 if storage gate=Trade, else 0.0
+    receipt_types: []
+    unit: binary
+    normalization: raw
+  
+  # Market volume metrics (10-13)
+  - index: 10
+    name: compute_volume
+    category: volume
+    description: Cumulative compute units processed
+    receipt_types: [Compute]
+    unit: compute_units
+    normalization: zscore
+  - index: 11
+    name: storage_volume
+    category: volume
+    description: Cumulative bytes stored
+    receipt_types: [Storage]
+    unit: bytes
+    normalization: zscore
+  - index: 12
+    name: energy_volume
+    category: volume
+    description: Cumulative energy delivered (kwh)
+    receipt_types: [Energy]
+    unit: kwh
+    normalization: zscore
+  - index: 13
+    name: ad_impressions
+    category: volume
+    description: Cumulative ad impressions
+    receipt_types: [Ad]
+    unit: impressions
+    normalization: zscore
+  
+  # Payment flow metrics (14-17)
+  - index: 14
+    name: compute_spend
+    category: payment
+    description: BLOCK spent on compute
+    receipt_types: [Compute]
+    unit: block_tokens
+    normalization: zscore
+  - index: 15
+    name: storage_spend
+    category: payment
+    description: BLOCK spent on storage
+    receipt_types: [Storage]
+    unit: block_tokens
+    normalization: zscore
+  - index: 16
+    name: energy_spend
+    category: payment
+    description: BLOCK spent on energy
+    receipt_types: [Energy]
+    unit: block_tokens
+    normalization: zscore
+  - index: 17
+    name: ad_spend
+    category: payment
+    description: BLOCK spent on ads
+    receipt_types: [Ad]
+    unit: block_tokens
+    normalization: zscore
+  
+  # Provider diversity (18-19)
+  - index: 18
+    name: unique_providers
+    category: diversity
+    description: Number of unique providers seen recently
+    receipt_types: [Compute, Storage, Energy, Ad]
+    unit: count
+    normalization: zscore
+  - index: 19
+    name: provider_concentration
+    category: diversity
+    description: Herfindahl index of provider market share
+    receipt_types: [Compute, Storage, Energy, Ad]
+    unit: ratio
+    normalization: zscore
+  
+  # Reserved for future expansion (20-63)
+  # Total dimension: 256 (with lag stacking)

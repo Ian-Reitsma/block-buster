@@ -1,0 +1,68 @@
+version: 0x01
+features:
+  - index: 0
+    name: liquidity_delta
+    category: liquidity
+    event_kinds: [ADD_LIQUIDITY, REMOVE_LIQUIDITY]
+    unit: token
+    normalization: zscore
+  - index: 1
+    name: log_cum_liquidity
+    category: liquidity
+    event_kinds: [ADD_LIQUIDITY, REMOVE_LIQUIDITY]
+    unit: log_token
+    normalization: zscore
+  - index: 2
+    name: signed_volume
+    category: orderflow
+    event_kinds: [SWAP]
+    unit: token
+    normalization: zscore
+  - index: 3
+    name: abs_volume
+    category: orderflow
+    event_kinds: [SWAP]
+    unit: token
+    normalization: zscore
+  - index: 4
+    name: swap_frequency
+    category: orderflow
+    event_kinds: [SWAP]
+    unit: per_ms
+    normalization: zscore
+  - index: 5
+    name: minted_amount
+    category: ownership
+    event_kinds: [MINT]
+    unit: token
+    normalization: zscore
+  - index: 6
+    name: tx_per_sec
+    category: network
+    event_kinds: []
+    unit: tps
+    normalization: zscore
+  - index: 7
+    name: median_priority_fee
+    category: network
+    event_kinds: []
+    unit: lamports
+    normalization: zscore
+  - index: 8
+    name: rolling_volume
+    category: orderflow
+    event_kinds: [SWAP]
+    unit: token
+    normalization: zscore
+  - index: 9
+    name: average_fee
+    category: cost
+    event_kinds: [SWAP]
+    unit: token
+    normalization: zscore
+  - index: 10
+    name: vwap
+    category: price
+    event_kinds: [SWAP]
+    unit: price
+    normalization: zscore

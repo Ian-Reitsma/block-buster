@@ -1,0 +1,2647 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "sol-bot API",
+    "version": "0.1.0"
+  },
+  "paths": {
+    "/license": {
+      "get": {
+        "summary": "License Info",
+        "operationId": "license_info_license_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LicenseInfo"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/state": {
+      "get": {
+        "summary": "State",
+        "operationId": "state_state_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response State State Get"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Update State",
+        "operationId": "update_state_state_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StateUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response Update State State Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/engine/start": {
+      "post": {
+        "summary": "Engine Start",
+        "description": "Explicitly start the trading engine.",
+        "operationId": "engine_start_engine_start_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response Engine Start Engine Start Post"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/engine/stop": {
+      "post": {
+        "summary": "Engine Stop",
+        "description": "Pause all trading engine activity.",
+        "operationId": "engine_stop_engine_stop_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response Engine Stop Engine Stop Post"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api": {
+      "get": {
+        "summary": "Api Index",
+        "description": "Return resource index and embed template for TradingView.",
+        "operationId": "api_index_api_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServiceMap"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health": {
+      "get": {
+        "summary": "Health",
+        "operationId": "health_health_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response Health Health Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/tv": {
+      "get": {
+        "summary": "Tradingview Page",
+        "description": "Return simple TradingView iframe for manual inspection.",
+        "operationId": "tradingview_page_tv_get",
+        "parameters": [
+          {
+            "required": false,
+            "schema": {
+              "type": "string",
+              "title": "Symbol",
+              "default": "SOL"
+            },
+            "name": "symbol",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/status": {
+      "get": {
+        "summary": "Status",
+        "operationId": "status_status_get",
+        "parameters": [
+          {
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0.0,
+              "title": "Start"
+            },
+            "name": "start",
+            "in": "query"
+          },
+          {
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0.0,
+              "title": "End"
+            },
+            "name": "end",
+            "in": "query"
+          },
+          {
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 1000.0,
+              "minimum": 1.0,
+              "title": "Limit",
+              "default": 1000
+            },
+            "name": "limit",
+            "in": "query"
+          },
+          {
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0.0,
+              "title": "Offset"
+            },
+            "name": "offset",
+            "in": "query"
+          },
+          {
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0.0,
+              "title": "Cursor"
+            },
+            "name": "cursor",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response Status Status Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/metrics": {
+      "get": {
+        "summary": "Metrics",
+        "operationId": "metrics_metrics_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Metrics"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/price/sol": {
+      "get": {
+        "summary": "Price Sol",
+        "description": "Return the current SOL price in USD.",
+        "operationId": "price_sol_price_sol_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response Price Sol Price Sol Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/pnl/realized": {
+      "get": {
+        "summary": "Pnl Realized",
+        "description": "Return aggregate realized PnL.",
+        "operationId": "pnl_realized_pnl_realized_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response Pnl Realized Pnl Realized Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/risk/portfolio": {
+      "get": {
+        "summary": "Risk Portfolio",
+        "description": "Return portfolio-level risk metrics.",
+        "operationId": "risk_portfolio_risk_portfolio_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response Risk Portfolio Risk Portfolio Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/risk/rug": {
+      "get": {
+        "summary": "Risk Rug Endpoint",
+        "description": "Return current rug pull alerts.",
+        "operationId": "risk_rug_endpoint_risk_rug_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response Risk Rug Endpoint Risk Rug Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/assets": {
+      "get": {
+        "summary": "Assets Endpoint",
+        "operationId": "assets_endpoint_assets_get",
+        "parameters": [
+          {
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 1000.0,
+              "minimum": 1.0,
+              "title": "Limit",
+              "default": 1000
+            },
+            "name": "limit",
+            "in": "query"
+          },
+          {
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0.0,
+              "title": "Offset"
+            },
+            "name": "offset",
+            "in": "query"
+          },
+          {
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0.0,
+              "title": "Cursor"
+            },
+            "name": "cursor",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array",
+                  "title": "Response Assets Endpoint Assets Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/events/catalysts": {
+      "get": {
+        "summary": "Catalysts Endpoint",
+        "operationId": "catalysts_endpoint_events_catalysts_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/Catalyst"
+                  },
+                  "type": "array",
+                  "title": "Response Catalysts Endpoint Events Catalysts Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/risk/security": {
+      "get": {
+        "summary": "Risk Security Endpoint",
+        "operationId": "risk_security_endpoint_risk_security_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SecurityReport"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/market/active": {
+      "get": {
+        "summary": "Market Active",
+        "description": "Return basic stats for active market pairs.",
+        "operationId": "market_active_market_active_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/MarketStat"
+                  },
+                  "type": "array",
+                  "title": "Response Market Active Market Active Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/sentiment/trending": {
+      "get": {
+        "summary": "Sentiment Trending",
+        "description": "Return currently trending tokens with sentiment data.\n\nThis stub pulls from the in-memory collectors fed by\n``solbot.social.twitter`` and ``solbot.social.telegram`` modules.  The\ncollectors are lightweight and primarily used for tests and demo mode\nso we seed a few memecoin examples when no live data is present.",
+        "operationId": "sentiment_trending_sentiment_trending_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/TrendingToken"
+                  },
+                  "type": "array",
+                  "title": "Response Sentiment Trending Sentiment Trending Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/sentiment/influencers": {
+      "get": {
+        "summary": "Sentiment Influencers",
+        "description": "Return recent influencer messages.",
+        "operationId": "sentiment_influencers_sentiment_influencers_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/InfluencerAlert"
+                  },
+                  "type": "array",
+                  "title": "Response Sentiment Influencers Sentiment Influencers Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/sentiment/pulse": {
+      "get": {
+        "summary": "Sentiment Pulse",
+        "description": "Return aggregate community sentiment metrics.",
+        "operationId": "sentiment_pulse_sentiment_pulse_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PulseMetrics"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/news": {
+      "get": {
+        "summary": "News Endpoint",
+        "description": "Return latest news items.",
+        "operationId": "news_endpoint_news_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/NewsItem"
+                  },
+                  "type": "array",
+                  "title": "Response News Endpoint News Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/whales": {
+      "get": {
+        "summary": "Whales Endpoint",
+        "description": "Return basic whale tracking statistics.",
+        "operationId": "whales_endpoint_whales_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WhaleStats"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/smart-money-flow": {
+      "get": {
+        "summary": "Smart Money Flow Endpoint",
+        "description": "Return net inflow statistics for smart money.",
+        "operationId": "smart_money_flow_endpoint_smart_money_flow_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SmartMoneyFlow"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/copy-trading": {
+      "get": {
+        "summary": "Copy Trading Endpoint",
+        "description": "Return recent profitable whale trades being copied.",
+        "operationId": "copy_trading_endpoint_copy_trading_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/CopyTrade"
+                  },
+                  "type": "array",
+                  "title": "Response Copy Trading Endpoint Copy Trading Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/strategies": {
+      "get": {
+        "summary": "Strategies Endpoint",
+        "description": "Return demo strategy performance statistics.",
+        "operationId": "strategies_endpoint_strategies_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/StrategyStat"
+                  },
+                  "type": "array",
+                  "title": "Response Strategies Endpoint Strategies Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/arbitrage": {
+      "get": {
+        "summary": "Arbitrage Endpoint",
+        "description": "Return demo arbitrage engine status.",
+        "operationId": "arbitrage_endpoint_arbitrage_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArbitrageStat"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/strategy/performance": {
+      "get": {
+        "summary": "Strategy Performance",
+        "operationId": "strategy_performance_strategy_performance_get",
+        "parameters": [
+          {
+            "required": false,
+            "schema": {
+              "type": "string",
+              "title": "Period",
+              "default": "7d"
+            },
+            "name": "period",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/StrategyPerf"
+                  },
+                  "type": "array",
+                  "title": "Response Strategy Performance Strategy Performance Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/strategy/breakdown": {
+      "get": {
+        "summary": "Strategy Breakdown",
+        "operationId": "strategy_breakdown_strategy_breakdown_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/StrategyBreakdownItem"
+                  },
+                  "type": "array",
+                  "title": "Response Strategy Breakdown Strategy Breakdown Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/strategy/risk": {
+      "get": {
+        "summary": "Strategy Risk",
+        "operationId": "strategy_risk_strategy_risk_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StrategyRisk"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/strategy/matrix": {
+      "get": {
+        "summary": "Strategy Matrix",
+        "operationId": "strategy_matrix_strategy_matrix_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/StrategyMatrixItem"
+                  },
+                  "type": "array",
+                  "title": "Response Strategy Matrix Strategy Matrix Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/strategy/performance_matrix": {
+      "get": {
+        "summary": "Strategy Performance Matrix",
+        "description": "Return recent strategy performance metrics.",
+        "operationId": "strategy_performance_matrix_strategy_performance_matrix_get",
+        "parameters": [
+          {
+            "required": false,
+            "schema": {
+              "type": "string",
+              "title": "Period",
+              "default": "7d"
+            },
+            "name": "period",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PerformanceMatrix"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/mev/status": {
+      "get": {
+        "summary": "Mev Status Endpoint",
+        "operationId": "mev_status_endpoint_mev_status_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MevStatus"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/alpha/signals": {
+      "get": {
+        "summary": "Alpha Signals Endpoint",
+        "operationId": "alpha_signals_endpoint_alpha_signals_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AlphaSignals"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/features": {
+      "get": {
+        "summary": "Features Endpoint",
+        "operationId": "features_endpoint_features_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FeatureSnapshot"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/features/schema": {
+      "get": {
+        "summary": "Features Schema Endpoint",
+        "description": "Return metadata mapping feature indices to names.",
+        "operationId": "features_schema_endpoint_features_schema_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FeatureSchema"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/posterior": {
+      "get": {
+        "summary": "Posterior Endpoint",
+        "operationId": "posterior_endpoint_posterior_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PosteriorSnapshot"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/backtest": {
+      "post": {
+        "summary": "Backtest",
+        "operationId": "backtest_backtest_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BacktestJobRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BacktestJobResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/backtest/history": {
+      "get": {
+        "summary": "Backtest History",
+        "operationId": "backtest_history_backtest_history_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "type": "object"
+                  },
+                  "type": "array",
+                  "title": "Response Backtest History Backtest History Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/backtest/{job_id}": {
+      "get": {
+        "summary": "Get Backtest",
+        "operationId": "get_backtest_backtest__job_id__get",
+        "parameters": [
+          {
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            },
+            "name": "job_id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response Get Backtest Backtest  Job Id  Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/dashboard": {
+      "get": {
+        "summary": "Dashboard",
+        "operationId": "dashboard_dashboard_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response Dashboard Dashboard Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/positions": {
+      "get": {
+        "summary": "Positions",
+        "operationId": "positions_positions_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response Positions Positions Get"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ]
+      }
+    },
+    "/orders": {
+      "get": {
+        "summary": "Orders",
+        "operationId": "orders_orders_get",
+        "parameters": [
+          {
+            "required": false,
+            "schema": {
+              "type": "string",
+              "title": "Status"
+            },
+            "name": "status",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "type": "object"
+                  },
+                  "type": "array",
+                  "title": "Response Orders Orders Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ]
+      },
+      "post": {
+        "summary": "Place Order",
+        "operationId": "place_order_orders_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OrderRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrderResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ]
+      }
+    },
+    "/logs/generate": {
+      "post": {
+        "summary": "Logs Generate",
+        "description": "Generate sample log entries for the debug console.",
+        "operationId": "logs_generate_logs_generate_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response Logs Generate Logs Generate Post"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/chart/portfolio": {
+      "get": {
+        "summary": "Chart Portfolio",
+        "description": "Return portfolio equity history with pagination and downsampling.",
+        "operationId": "chart_portfolio_chart_portfolio_get",
+        "parameters": [
+          {
+            "required": false,
+            "schema": {
+              "type": "string",
+              "title": "Tf",
+              "default": "1H"
+            },
+            "name": "tf",
+            "in": "query"
+          },
+          {
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0.0,
+              "title": "Start"
+            },
+            "name": "start",
+            "in": "query"
+          },
+          {
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0.0,
+              "title": "End"
+            },
+            "name": "end",
+            "in": "query"
+          },
+          {
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 1000.0,
+              "minimum": 1.0,
+              "title": "Limit",
+              "default": 1000
+            },
+            "name": "limit",
+            "in": "query"
+          },
+          {
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0.0,
+              "title": "Offset"
+            },
+            "name": "offset",
+            "in": "query"
+          },
+          {
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0.0,
+              "title": "Cursor"
+            },
+            "name": "cursor",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response Chart Portfolio Chart Portfolio Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/chart/{symbol}": {
+      "get": {
+        "summary": "Chart",
+        "operationId": "chart_chart__symbol__get",
+        "parameters": [
+          {
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Symbol"
+            },
+            "name": "symbol",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response Chart Chart  Symbol  Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/version": {
+      "get": {
+        "summary": "Version",
+        "operationId": "version_version_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response Version Version Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/manifest": {
+      "get": {
+        "summary": "Manifest",
+        "operationId": "manifest_manifest_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Manifest"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "AlphaSignals": {
+        "properties": {
+          "strength": {
+            "type": "string",
+            "title": "Strength"
+          },
+          "social_sentiment": {
+            "type": "number",
+            "title": "Social Sentiment"
+          },
+          "onchain_momentum": {
+            "type": "number",
+            "title": "Onchain Momentum"
+          },
+          "whale_activity": {
+            "type": "number",
+            "title": "Whale Activity"
+          }
+        },
+        "type": "object",
+        "required": [
+          "strength",
+          "social_sentiment",
+          "onchain_momentum",
+          "whale_activity"
+        ],
+        "title": "AlphaSignals"
+      },
+      "ArbitrageStat": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "trades": {
+            "type": "integer",
+            "title": "Trades"
+          },
+          "pnl": {
+            "type": "number",
+            "title": "Pnl"
+          },
+          "spread": {
+            "type": "number",
+            "title": "Spread"
+          },
+          "opportunities": {
+            "type": "integer",
+            "title": "Opportunities"
+          },
+          "latency": {
+            "type": "integer",
+            "title": "Latency"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status",
+          "trades",
+          "pnl",
+          "spread",
+          "opportunities",
+          "latency"
+        ],
+        "title": "ArbitrageStat"
+      },
+      "BacktestJobRequest": {
+        "properties": {
+          "period": {
+            "type": "string",
+            "title": "Period"
+          },
+          "capital": {
+            "type": "number",
+            "title": "Capital"
+          },
+          "strategy_mix": {
+            "type": "string",
+            "title": "Strategy Mix"
+          }
+        },
+        "type": "object",
+        "required": [
+          "period",
+          "capital",
+          "strategy_mix"
+        ],
+        "title": "BacktestJobRequest"
+      },
+      "BacktestJobResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id"
+        ],
+        "title": "BacktestJobResponse"
+      },
+      "Catalyst": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "eta": {
+            "type": "integer",
+            "title": "Eta"
+          },
+          "severity": {
+            "type": "string",
+            "title": "Severity"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "eta",
+          "severity"
+        ],
+        "title": "Catalyst"
+      },
+      "CopyTrade": {
+        "properties": {
+          "whale": {
+            "type": "string",
+            "title": "Whale"
+          },
+          "profit": {
+            "type": "number",
+            "title": "Profit"
+          }
+        },
+        "type": "object",
+        "required": [
+          "whale"
+        ],
+        "title": "CopyTrade"
+      },
+      "EndpointMap": {
+        "properties": {
+          "health": {
+            "type": "string",
+            "title": "Health"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "assets": {
+            "type": "string",
+            "title": "Assets"
+          },
+          "features": {
+            "type": "string",
+            "title": "Features"
+          },
+          "features_schema": {
+            "type": "string",
+            "title": "Features Schema"
+          },
+          "posterior": {
+            "type": "string",
+            "title": "Posterior"
+          },
+          "positions": {
+            "type": "string",
+            "title": "Positions"
+          },
+          "orders": {
+            "type": "string",
+            "title": "Orders"
+          },
+          "backtest": {
+            "type": "string",
+            "title": "Backtest"
+          },
+          "chart": {
+            "type": "string",
+            "title": "Chart"
+          },
+          "chart_portfolio": {
+            "type": "string",
+            "title": "Chart Portfolio"
+          },
+          "version": {
+            "type": "string",
+            "title": "Version"
+          },
+          "docs": {
+            "type": "string",
+            "title": "Docs"
+          },
+          "redoc": {
+            "type": "string",
+            "title": "Redoc"
+          },
+          "openapi": {
+            "type": "string",
+            "title": "Openapi"
+          },
+          "metrics": {
+            "type": "string",
+            "title": "Metrics"
+          },
+          "orders_ws": {
+            "type": "string",
+            "title": "Orders Ws"
+          },
+          "features_ws": {
+            "type": "string",
+            "title": "Features Ws"
+          },
+          "posterior_ws": {
+            "type": "string",
+            "title": "Posterior Ws"
+          },
+          "positions_ws": {
+            "type": "string",
+            "title": "Positions Ws"
+          },
+          "dashboard_ws": {
+            "type": "string",
+            "title": "Dashboard Ws"
+          },
+          "logs_ws": {
+            "type": "string",
+            "title": "Logs Ws"
+          },
+          "dashboard": {
+            "type": "string",
+            "title": "Dashboard"
+          },
+          "manifest": {
+            "type": "string",
+            "title": "Manifest"
+          },
+          "tv": {
+            "type": "string",
+            "title": "Tv"
+          },
+          "license": {
+            "type": "string",
+            "title": "License"
+          },
+          "state": {
+            "type": "string",
+            "title": "State"
+          },
+          "events_catalysts": {
+            "type": "string",
+            "title": "Events Catalysts"
+          },
+          "risk_security": {
+            "type": "string",
+            "title": "Risk Security"
+          },
+          "whales": {
+            "type": "string",
+            "title": "Whales"
+          },
+          "smart_money_flow": {
+            "type": "string",
+            "title": "Smart Money Flow"
+          },
+          "copy_trading": {
+            "type": "string",
+            "title": "Copy Trading"
+          },
+          "strategies": {
+            "type": "string",
+            "title": "Strategies"
+          },
+          "arbitrage": {
+            "type": "string",
+            "title": "Arbitrage"
+          },
+          "sentiment_trending": {
+            "type": "string",
+            "title": "Sentiment Trending"
+          },
+          "sentiment_influencers": {
+            "type": "string",
+            "title": "Sentiment Influencers"
+          },
+          "sentiment_pulse": {
+            "type": "string",
+            "title": "Sentiment Pulse"
+          },
+          "news": {
+            "type": "string",
+            "title": "News"
+          },
+          "strategy_performance": {
+            "type": "string",
+            "title": "Strategy Performance"
+          },
+          "strategy_breakdown": {
+            "type": "string",
+            "title": "Strategy Breakdown"
+          },
+          "strategy_risk": {
+            "type": "string",
+            "title": "Strategy Risk"
+          },
+          "mev_status": {
+            "type": "string",
+            "title": "Mev Status"
+          },
+          "alpha_signals": {
+            "type": "string",
+            "title": "Alpha Signals"
+          },
+          "logs_generate": {
+            "type": "string",
+            "title": "Logs Generate"
+          },
+          "risk_rug": {
+            "type": "string",
+            "title": "Risk Rug"
+          },
+          "market_active": {
+            "type": "string",
+            "title": "Market Active"
+          }
+        },
+        "type": "object",
+        "required": [
+          "health",
+          "status",
+          "assets",
+          "features",
+          "features_schema",
+          "posterior",
+          "positions",
+          "orders",
+          "backtest",
+          "chart",
+          "chart_portfolio",
+          "version",
+          "docs",
+          "redoc",
+          "openapi",
+          "metrics",
+          "orders_ws",
+          "features_ws",
+          "posterior_ws",
+          "positions_ws",
+          "dashboard_ws",
+          "logs_ws",
+          "dashboard",
+          "manifest",
+          "tv",
+          "license",
+          "state",
+          "events_catalysts",
+          "risk_security",
+          "whales",
+          "smart_money_flow",
+          "copy_trading",
+          "strategies",
+          "arbitrage",
+          "sentiment_trending",
+          "sentiment_influencers",
+          "sentiment_pulse",
+          "news",
+          "strategy_performance",
+          "strategy_breakdown",
+          "strategy_risk",
+          "mev_status",
+          "alpha_signals",
+          "logs_generate",
+          "risk_rug",
+          "market_active"
+        ],
+        "title": "EndpointMap"
+      },
+      "FeatureInfo": {
+        "properties": {
+          "index": {
+            "type": "integer",
+            "title": "Index"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "category": {
+            "type": "string",
+            "title": "Category"
+          },
+          "event_kinds": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Event Kinds"
+          },
+          "unit": {
+            "type": "string",
+            "title": "Unit"
+          },
+          "normalization": {
+            "type": "string",
+            "title": "Normalization"
+          }
+        },
+        "type": "object",
+        "required": [
+          "index",
+          "name",
+          "category",
+          "event_kinds",
+          "unit",
+          "normalization"
+        ],
+        "title": "FeatureInfo"
+      },
+      "FeatureSchema": {
+        "properties": {
+          "version": {
+            "type": "integer",
+            "title": "Version"
+          },
+          "features": {
+            "items": {
+              "$ref": "#/components/schemas/FeatureInfo"
+            },
+            "type": "array",
+            "title": "Features"
+          },
+          "timestamp": {
+            "type": "integer",
+            "title": "Timestamp"
+          },
+          "schema": {
+            "type": "string",
+            "title": "Schema"
+          }
+        },
+        "type": "object",
+        "required": [
+          "version",
+          "features",
+          "timestamp",
+          "schema"
+        ],
+        "title": "FeatureSchema"
+      },
+      "FeatureSnapshot": {
+        "properties": {
+          "features": {
+            "items": {
+              "type": "number"
+            },
+            "type": "array",
+            "title": "Features"
+          },
+          "timestamp": {
+            "type": "integer",
+            "title": "Timestamp"
+          }
+        },
+        "type": "object",
+        "required": [
+          "features",
+          "timestamp"
+        ],
+        "title": "FeatureSnapshot"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "InfluencerAlert": {
+        "properties": {
+          "handle": {
+            "type": "string",
+            "title": "Handle"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          },
+          "followers": {
+            "type": "integer",
+            "title": "Followers"
+          },
+          "stance": {
+            "type": "string",
+            "title": "Stance"
+          }
+        },
+        "type": "object",
+        "required": [
+          "handle",
+          "message",
+          "followers",
+          "stance"
+        ],
+        "title": "InfluencerAlert"
+      },
+      "LicenseInfo": {
+        "properties": {
+          "wallet": {
+            "type": "string",
+            "title": "Wallet"
+          },
+          "mode": {
+            "type": "string",
+            "title": "Mode"
+          },
+          "issued_at": {
+            "type": "integer",
+            "title": "Issued At"
+          },
+          "expires_at": {
+            "type": "integer",
+            "title": "Expires At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "wallet",
+          "mode",
+          "issued_at",
+          "expires_at"
+        ],
+        "title": "LicenseInfo"
+      },
+      "Manifest": {
+        "properties": {
+          "version": {
+            "type": "integer",
+            "title": "Version"
+          },
+          "rest": {
+            "items": {
+              "$ref": "#/components/schemas/RouteInfo"
+            },
+            "type": "array",
+            "title": "Rest"
+          },
+          "websocket": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Websocket"
+          },
+          "timestamp": {
+            "type": "integer",
+            "title": "Timestamp"
+          }
+        },
+        "type": "object",
+        "required": [
+          "version",
+          "rest",
+          "websocket",
+          "timestamp"
+        ],
+        "title": "Manifest"
+      },
+      "MarketStat": {
+        "properties": {
+          "symbol": {
+            "type": "string",
+            "title": "Symbol"
+          },
+          "volume": {
+            "type": "number",
+            "title": "Volume"
+          },
+          "volatility": {
+            "type": "number",
+            "title": "Volatility"
+          },
+          "liquidity": {
+            "type": "number",
+            "title": "Liquidity"
+          },
+          "spread": {
+            "type": "number",
+            "title": "Spread"
+          }
+        },
+        "type": "object",
+        "required": [
+          "symbol",
+          "volume",
+          "volatility",
+          "liquidity",
+          "spread"
+        ],
+        "title": "MarketStat"
+      },
+      "Metrics": {
+        "properties": {
+          "cpu": {
+            "type": "number",
+            "title": "Cpu"
+          },
+          "memory": {
+            "type": "number",
+            "title": "Memory"
+          },
+          "network": {
+            "$ref": "#/components/schemas/NetworkStats"
+          }
+        },
+        "type": "object",
+        "title": "Metrics"
+      },
+      "MevStatus": {
+        "properties": {
+          "saved_today": {
+            "type": "number",
+            "title": "Saved Today"
+          },
+          "attacks_blocked": {
+            "type": "integer",
+            "title": "Attacks Blocked"
+          },
+          "success_rate": {
+            "type": "number",
+            "title": "Success Rate"
+          },
+          "latency_ms": {
+            "type": "number",
+            "title": "Latency Ms"
+          }
+        },
+        "type": "object",
+        "required": [
+          "saved_today",
+          "attacks_blocked",
+          "success_rate",
+          "latency_ms"
+        ],
+        "title": "MevStatus"
+      },
+      "NetworkStats": {
+        "properties": {
+          "tps": {
+            "type": "number",
+            "title": "Tps"
+          },
+          "fee": {
+            "type": "number",
+            "title": "Fee"
+          }
+        },
+        "type": "object",
+        "title": "NetworkStats"
+      },
+      "NewsItem": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "source": {
+            "type": "string",
+            "title": "Source"
+          },
+          "confidence": {
+            "type": "integer",
+            "title": "Confidence"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "title",
+          "source",
+          "confidence"
+        ],
+        "title": "NewsItem"
+      },
+      "OrderRequest": {
+        "properties": {
+          "token": {
+            "type": "string",
+            "title": "Token"
+          },
+          "qty": {
+            "type": "number",
+            "title": "Qty"
+          },
+          "side": {
+            "$ref": "#/components/schemas/Side"
+          },
+          "limit": {
+            "type": "number",
+            "title": "Limit"
+          }
+        },
+        "type": "object",
+        "required": [
+          "token",
+          "qty",
+          "side"
+        ],
+        "title": "OrderRequest"
+      },
+      "OrderResponse": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "token": {
+            "type": "string",
+            "title": "Token"
+          },
+          "quantity": {
+            "type": "number",
+            "title": "Quantity"
+          },
+          "side": {
+            "$ref": "#/components/schemas/Side"
+          },
+          "price": {
+            "type": "number",
+            "title": "Price"
+          },
+          "slippage": {
+            "type": "number",
+            "title": "Slippage"
+          },
+          "fee": {
+            "type": "number",
+            "title": "Fee"
+          },
+          "timestamp": {
+            "type": "integer",
+            "title": "Timestamp"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "token",
+          "quantity",
+          "side",
+          "price",
+          "slippage",
+          "fee",
+          "timestamp",
+          "status"
+        ],
+        "title": "OrderResponse"
+      },
+      "PerformanceMatrix": {
+        "properties": {
+          "days": {
+            "items": {
+              "type": "number"
+            },
+            "type": "array",
+            "title": "Days"
+          },
+          "strategies": {
+            "items": {
+              "$ref": "#/components/schemas/StrategyPerf"
+            },
+            "type": "array",
+            "title": "Strategies"
+          },
+          "risk": {
+            "$ref": "#/components/schemas/StrategyRisk"
+          }
+        },
+        "type": "object",
+        "required": [
+          "days",
+          "strategies",
+          "risk"
+        ],
+        "title": "PerformanceMatrix"
+      },
+      "PosteriorSnapshot": {
+        "properties": {
+          "rug": {
+            "type": "number",
+            "title": "Rug"
+          },
+          "trend": {
+            "type": "number",
+            "title": "Trend"
+          },
+          "revert": {
+            "type": "number",
+            "title": "Revert"
+          },
+          "chop": {
+            "type": "number",
+            "title": "Chop"
+          },
+          "timestamp": {
+            "type": "integer",
+            "title": "Timestamp"
+          }
+        },
+        "type": "object",
+        "required": [
+          "rug",
+          "trend",
+          "revert",
+          "chop",
+          "timestamp"
+        ],
+        "title": "PosteriorSnapshot"
+      },
+      "PulseMetrics": {
+        "properties": {
+          "fear_greed": {
+            "type": "integer",
+            "title": "Fear Greed"
+          },
+          "fear_greed_pct": {
+            "type": "number",
+            "title": "Fear Greed Pct"
+          },
+          "social_volume": {
+            "type": "integer",
+            "title": "Social Volume"
+          },
+          "social_volume_pct": {
+            "type": "number",
+            "title": "Social Volume Pct"
+          },
+          "fomo": {
+            "type": "integer",
+            "title": "Fomo"
+          },
+          "fomo_pct": {
+            "type": "number",
+            "title": "Fomo Pct"
+          },
+          "timestamp": {
+            "type": "integer",
+            "title": "Timestamp"
+          }
+        },
+        "type": "object",
+        "required": [
+          "fear_greed",
+          "fear_greed_pct",
+          "social_volume",
+          "social_volume_pct",
+          "fomo",
+          "fomo_pct"
+        ],
+        "title": "PulseMetrics"
+      },
+      "RouteInfo": {
+        "properties": {
+          "path": {
+            "type": "string",
+            "title": "Path"
+          },
+          "methods": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Methods"
+          }
+        },
+        "type": "object",
+        "required": [
+          "path",
+          "methods"
+        ],
+        "title": "RouteInfo"
+      },
+      "SecurityFlag": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "detail": {
+            "type": "string",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status",
+          "detail"
+        ],
+        "title": "SecurityFlag"
+      },
+      "SecurityReport": {
+        "properties": {
+          "rug_pull": {
+            "$ref": "#/components/schemas/SecurityFlag"
+          },
+          "liquidity": {
+            "$ref": "#/components/schemas/SecurityFlag"
+          },
+          "contract_verified": {
+            "$ref": "#/components/schemas/SecurityFlag"
+          },
+          "holder_distribution": {
+            "$ref": "#/components/schemas/SecurityFlag"
+          },
+          "trading_patterns": {
+            "$ref": "#/components/schemas/SecurityFlag"
+          }
+        },
+        "type": "object",
+        "required": [
+          "rug_pull",
+          "liquidity",
+          "contract_verified",
+          "holder_distribution",
+          "trading_patterns"
+        ],
+        "title": "SecurityReport"
+      },
+      "ServiceMap": {
+        "properties": {
+          "tradingview": {
+            "type": "string",
+            "title": "Tradingview"
+          },
+          "endpoints": {
+            "$ref": "#/components/schemas/EndpointMap"
+          },
+          "license": {
+            "$ref": "#/components/schemas/LicenseInfo"
+          },
+          "timestamp": {
+            "type": "integer",
+            "title": "Timestamp"
+          },
+          "schema": {
+            "type": "string",
+            "title": "Schema"
+          }
+        },
+        "type": "object",
+        "required": [
+          "tradingview",
+          "endpoints",
+          "license",
+          "timestamp",
+          "schema"
+        ],
+        "title": "ServiceMap"
+      },
+      "Side": {
+        "enum": [
+          "buy",
+          "sell"
+        ],
+        "title": "Side",
+        "description": "An enumeration."
+      },
+      "SmartMoneyFlow": {
+        "properties": {
+          "net_inflow": {
+            "type": "number",
+            "title": "Net Inflow"
+          },
+          "trend": {
+            "type": "string",
+            "title": "Trend"
+          }
+        },
+        "type": "object",
+        "required": [
+          "net_inflow",
+          "trend"
+        ],
+        "title": "SmartMoneyFlow"
+      },
+      "StateUpdate": {
+        "properties": {
+          "running": {
+            "type": "boolean",
+            "title": "Running"
+          },
+          "emergency_stop": {
+            "type": "boolean",
+            "title": "Emergency Stop"
+          },
+          "settings": {
+            "type": "object",
+            "title": "Settings"
+          },
+          "mode": {
+            "type": "string",
+            "pattern": "^(live|demo)$",
+            "title": "Mode"
+          },
+          "paper_assets": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Paper Assets"
+          },
+          "paper_capital": {
+            "type": "number",
+            "title": "Paper Capital"
+          }
+        },
+        "type": "object",
+        "title": "StateUpdate"
+      },
+      "StrategyBreakdownItem": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "pnl": {
+            "type": "number",
+            "title": "Pnl"
+          },
+          "win_rate": {
+            "type": "number",
+            "title": "Win Rate"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "pnl",
+          "win_rate"
+        ],
+        "title": "StrategyBreakdownItem"
+      },
+      "StrategyMatrixItem": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "last_update": {
+            "type": "integer",
+            "title": "Last Update"
+          },
+          "latency_ms": {
+            "type": "integer",
+            "title": "Latency Ms"
+          },
+          "trades": {
+            "type": "integer",
+            "title": "Trades"
+          },
+          "pnl": {
+            "type": "number",
+            "title": "Pnl"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "status",
+          "last_update",
+          "latency_ms"
+        ],
+        "title": "StrategyMatrixItem"
+      },
+      "StrategyPerf": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "pnl": {
+            "type": "number",
+            "title": "Pnl"
+          },
+          "win_rate": {
+            "type": "number",
+            "title": "Win Rate"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "pnl",
+          "win_rate"
+        ],
+        "title": "StrategyPerf"
+      },
+      "StrategyRisk": {
+        "properties": {
+          "sharpe": {
+            "type": "number",
+            "title": "Sharpe"
+          },
+          "max_drawdown": {
+            "type": "number",
+            "title": "Max Drawdown"
+          },
+          "volatility": {
+            "type": "number",
+            "title": "Volatility"
+          },
+          "calmar": {
+            "type": "number",
+            "title": "Calmar"
+          }
+        },
+        "type": "object",
+        "required": [
+          "sharpe",
+          "max_drawdown",
+          "volatility",
+          "calmar"
+        ],
+        "title": "StrategyRisk"
+      },
+      "StrategyStat": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "trades": {
+            "type": "integer",
+            "title": "Trades"
+          },
+          "pnl": {
+            "type": "number",
+            "title": "Pnl"
+          },
+          "confidence": {
+            "type": "number",
+            "title": "Confidence"
+          },
+          "targets": {
+            "type": "integer",
+            "title": "Targets"
+          },
+          "success": {
+            "type": "number",
+            "title": "Success"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "trades",
+          "pnl",
+          "confidence",
+          "targets",
+          "success"
+        ],
+        "title": "StrategyStat"
+      },
+      "TrendingToken": {
+        "properties": {
+          "symbol": {
+            "type": "string",
+            "title": "Symbol"
+          },
+          "mentions": {
+            "type": "integer",
+            "title": "Mentions"
+          },
+          "change_pct": {
+            "type": "number",
+            "title": "Change Pct"
+          },
+          "sentiment": {
+            "type": "string",
+            "title": "Sentiment"
+          }
+        },
+        "type": "object",
+        "required": [
+          "symbol",
+          "mentions",
+          "change_pct",
+          "sentiment"
+        ],
+        "title": "TrendingToken"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      },
+      "WhaleStats": {
+        "properties": {
+          "following": {
+            "type": "integer",
+            "title": "Following"
+          },
+          "success_rate": {
+            "type": "number",
+            "title": "Success Rate"
+          },
+          "copied_today": {
+            "type": "integer",
+            "title": "Copied Today"
+          },
+          "profit": {
+            "type": "number",
+            "title": "Profit"
+          }
+        },
+        "type": "object",
+        "required": [
+          "following",
+          "success_rate",
+          "copied_today",
+          "profit"
+        ],
+        "title": "WhaleStats"
+      }
+    },
+    "securitySchemes": {
+      "APIKeyHeader": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-API-Key"
+      }
+    }
+  }
+}

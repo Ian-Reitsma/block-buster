@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Strategies · Block Buster</title>
+    <link rel="stylesheet" href="css/tailwind.min.css?v=20260205">
+    <link rel="stylesheet" href="dashboard.css?v=20260205">
+    <script src="runtime-config.js?v=20260205"></script>
+    <script src="js/utils.js?v=20260205"></script>
+    <script src="js/shell.js?v=20260205"></script>
+    <script src="js/nav.js?v=20260205"></script>
+    <script src="js/walkthrough.js?v=20260205"></script>
+</head>
+<body class="font-display min-h-screen relative">
+    <a href="#main-content" class="sr-only">Skip to content</a>
+    <main id="main-content" class="page-content space-y-5">
+        <div class="section-header" id="breadcrumb">
+            <div class="section-meta">
+                <span class="text-xs text-gray-400">Trade</span>
+                <span class="text-xs text-gray-500">/</span>
+                <span class="text-xs">Strategies</span>
+                <span id="strategy-pill" class="status-pill status-warn" aria-live="polite">PENDING</span>
+                <span id="strategy-schema" class="micro-badge">schema —</span>
+            </div>
+            <div class="section-meta">
+                <span id="strategy-lag" class="micro-badge">lag —</span>
+                <span id="strategy-errors" class="micro-badge">errs —</span>
+                <span id="strategy-updated" class="chip" aria-live="polite">Waiting for data</span>
+            </div>
+        </div>
+
+        <section class="panel-blade space-y-4" id="strategy-panel">
+            <div class="panel-header">
+                <div>
+                    <div class="panel-title">Strategy Console</div>
+                    <div class="panel-subtitle">Overview • Backtest Lab • History</div>
+                </div>
+                <div class="panel-actions">
+                    <span class="micro-badge" id="strategy-source">/strategies —</span>
+                    <button class="micro-badge" id="strategy-retry">Retry</button>
+                </div>
+            </div>
+
+            <div class="tabs flex items-center gap-2 text-sm">
+                <button class="btn secondary" data-tab="overview">Overview</button>
+                <button class="btn primary" data-tab="lab">Backtest Lab</button>
+                <button class="btn secondary" data-tab="history">History</button>
+            </div>
+
+            <div id="tab-overview" class="space-y-3">
+                <div class="card-grid">
+                    <div class="panel-blade">
+                        <div class="kpi-label">Most Popular</div>
+                        <div class="kpi-value" id="strat-popular">—</div>
+                        <div class="kpi-meta">Based on recent runs</div>
+                    </div>
+                    <div class="panel-blade">
+                        <div class="kpi-label">Best Sharpe</div>
+                        <div class="kpi-value" id="strat-sharpe">—</div>
+                        <div class="kpi-meta">Last 7d</div>
+                    </div>
+                    <div class="panel-blade">
+                        <div class="kpi-label">Win Rate</div>
+                        <div class="kpi-value" id="strat-winrate">—</div>
+                        <div class="kpi-meta">Across tracked strategies</div>
+                    </div>
+                </div>
+            </div>
+
+            <div id="tab-lab" class="space-y-3">
+                <div class="panel-subtitle">Allocations must sum to 100%.</div>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <label class="label">Start Date
+                        <input type="date" id="lab-start" class="form-control">
+                    </label>
+                    <label class="label">End Date
+                        <input type="date" id="lab-end" class="form-control">
+                    </label>
+                    <label class="label">Capital (BLOCK)
+                        <input type="number" id="lab-capital" class="form-control" min="100" step="10" value="1000">
+                    </label>
+                    <label class="label">Max Trades
+                        <input type="number" id="lab-trades" class="form-control" min="1" step="1" value="50">
+                    </label>
+                </div>
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    <label class="label">Sniper %
+                        <input type="number" id="alloc-sniper" class="form-control" min="0" max="100" value="30">
+                    </label>
+                    <label class="label">Arbitrage %
+                        <input type="number" id="alloc-arb" class="form-control" min="0" max="100" value="30">
+                    </label>
+                    <label class="label">Market Making %
+                        <input type="number" id="alloc-mm" class="form-control" min="0" max="100" value="40">
+                    </label>
+                </div>
+                <div class="flex items-center justify-between">
+                    <div class="text-xs text-gray-400" id="alloc-sum">Total: 100%</div>
+                    <div class="panel-actions">
+                        <button class="btn ghost" id="lab-reset">Reset</button>
+                        <button class="btn primary" id="lab-run">Run Backtest</button>
+                    </div>
+                </div>
+                <div class="panel-blade" id="lab-results">
+                    <div class="panel-header">
+                        <div>
+                            <div class="panel-title text-lg">Results</div>
+                            <div class="panel-subtitle">Equity + Drawdown curves</div>
+                        </div>
+                        <div class="panel-actions">
+                            <span class="chip" id="lab-run-meta">Pending</span>
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        <div class="empty-state" id="equity-empty">Run a backtest to see the equity curve.</div>
+                        <div class="empty-state" id="drawdown-empty">Run a backtest to see drawdown.</div>
+                    </div>
+                    <div class="grid grid-cols-2 gap-3 mt-3 text-sm">
+                        <div>Trades: <span id="lab-trade-count">—</span></div>
+                        <div>Win Rate: <span id="lab-win-rate">—</span></div>
+                        <div>Avg Trade: <span id="lab-avg-trade">—</span></div>
+                        <div>Change vs last: <span id="lab-change">—</span></div>
+                    </div>
+                </div>
+            </div>
+
+            <div id="tab-history" class="panel-blade">
+                <div class="panel-header">
+                    <div>
+                        <div class="panel-title text-lg">Recent Runs</div>
+                        <div class="panel-subtitle">Audit trail of past backtests.</div>
+                    </div>
+                    <div class="panel-actions">
+                        <span class="micro-badge">/backtest/history —</span>
+                        <button class="micro-badge" id="history-retry">Refresh</button>
+                    </div>
+                </div>
+                <div class="empty-state">No runs yet.</div>
+            </div>
+        </section>
+    </main>
+    <script src="js/utils.js?v=20260205"></script>
+    <script src="js/nav.js?v=20260205"></script>
+    <script src="js/walkthrough.js?v=20260205"></script>
+    <script>
+        const allocInputs = ['alloc-sniper','alloc-arb','alloc-mm'].map(id => document.getElementById(id));
+        const sumLabel = document.getElementById('alloc-sum');
+        function updateSum() {
+            const total = allocInputs.reduce((s,input)=>s + Number(input.value||0),0);
+            if (sumLabel) sumLabel.textContent = `Total: ${total}%`;
+            document.getElementById('lab-run').disabled = total !== 100;
+        }
+        allocInputs.forEach(i => i?.addEventListener('input', updateSum));
+        document.getElementById('lab-reset')?.addEventListener('click', () => {
+            allocInputs[0].value = 30; allocInputs[1].value = 30; allocInputs[2].value = 40; updateSum();
+        });
+        document.querySelectorAll('.tabs .btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                document.querySelectorAll('[id^=\"tab-\"]').forEach(p => p.style.display = 'none');
+                document.getElementById(`tab-${btn.dataset.tab}`)?.style.display = 'block';
+                document.querySelectorAll('.tabs .btn').forEach(b => b.classList.remove('primary'));
+                btn.classList.add('primary');
+            });
+        });
+        // default tab
+        document.querySelector('[data-tab=\"lab\"]')?.click();
+        updateSum();
+    </script>
+    <script src="js/footer.js?v=20260205"></script>
+</body>
+</html>

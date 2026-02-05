@@ -1,0 +1,14 @@
+{
+  "name": "block-buster-web",
+  "description": "Block Buster - Real-time monitoring and trading dashboard for The Block L1 blockchain",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "python -m http.server 4173",
+    "build": "echo \"Static build: open index.html or serve via any HTTP server.\"",
+    "test": "node -e \"console.log('No third-party tests; see /tests for stdlib')\""
+  },
+  "dependencies": {},
+  "devDependencies": {}
+}

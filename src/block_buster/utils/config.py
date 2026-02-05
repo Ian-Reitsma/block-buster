@@ -1,0 +1,73 @@
+"""Configuration management utilities."""
+
+from dataclasses import dataclass
+import argparse
+import os
+from typing import Optional, List
+
+
+def parse_args(args: Optional[List[str]] = None) -> argparse.Namespace:
+    """Parse command line arguments or provided list."""
+    parser = argparse.ArgumentParser(description="block-buster configuration")
+    parser.add_argument(
+        "--rpc-ws",
+        default=os.getenv("TB_WS_URL", "ws://localhost:8332/ws"),
+        help="The Block websocket endpoint",
+    )
+    parser.add_argument(
+        "--rpc-http",
+        default=os.getenv("TB_RPC_URL", "http://localhost:8332"),
+        help="The Block HTTP endpoint",
+    )
+    parser.add_argument(
+        "--log-level",
+        default=os.getenv("LOG_LEVEL", "INFO"),
+        help="Logging level",
+    )
+    parser.add_argument(
+        "--wallet",
+        default=os.getenv("WALLET_ADDR", ""),
+        help="Public key of the wallet running the bot",
+    )
+    parser.add_argument(
+        "--db-path",
+        default=os.getenv("DB_PATH", os.path.expanduser("~/.block-buster/state.db")),
+        help="Path to SQLite database for persistence",
+    )
+    parser.add_argument(
+        "--bootstrap",
+        action="store_true",
+        help="Run bootstrap process then exit",
+    )
+    parser.add_argument(
+        "--auto-start",
+        action="store_true",
+        help="Start engine immediately without waiting for user input",
+    )
+    ns = parser.parse_args(args)
+    if ns.rpc_http is None:
+        ns.rpc_http = ns.rpc_ws.replace("wss", "https").replace("ws", "http")
+    return ns
+
+
+@dataclass
+class BotConfig:
+    rpc_ws: str
+    rpc_http: str
+    log_level: str
+    wallet: str
+    db_path: str
+    bootstrap: bool = False
+    auto_start: bool = False
+
+    @classmethod
+    def from_args(cls, args: argparse.Namespace) -> "BotConfig":
+        return cls(
+            rpc_ws=args.rpc_ws,
+            rpc_http=args.rpc_http,
+            log_level=args.log_level,
+            wallet=args.wallet,
+            db_path=args.db_path,
+            bootstrap=args.bootstrap,
+            auto_start=getattr(args, "auto_start", False),
+        )

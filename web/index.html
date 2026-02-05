@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Block Buster · The Block</title>
+    <link rel="stylesheet" href="public/css/tailwind.min.css?v=20260205">
+    <link rel="stylesheet" href="public/dashboard.css?v=20260205">
+    <script src="public/runtime-config.js?v=20260205"></script>
+    <style>
+      body { margin: 0; min-height: 100vh; display: grid; place-items: center; position: relative; overflow: hidden; }
+      .landing-shell { position: relative; z-index: 5; max-width: 720px; width: min(92vw, 720px); }
+      .landing-card {
+        padding: 26px 28px;
+        border-radius: 18px;
+        background: rgba(12,18,28,0.92);
+        border: 1px solid rgba(124,198,255,0.35);
+        box-shadow: 0 18px 48px rgba(0,0,0,0.45);
+      }
+      .status-dot { width: 12px; height: 12px; border-radius: 999px; display: inline-block; }
+      .status-live { background: #3fd8ad; box-shadow: 0 0 12px rgba(63,216,173,0.7); }
+      .status-gated { background: #f0a500; box-shadow: 0 0 12px rgba(240,165,0,0.6); }
+      .status-warn { background: #ef5b6b; box-shadow: 0 0 12px rgba(239,91,107,0.6); }
+      .subtext { color: #9fb1c8; font-size: 13px; }
+    </style>
+    <script src="public/js/utils.js?v=20260205"></script>
+  </head>
+  <body class="font-display">
+    <div class="atmospheric-glow"></div>
+    <div class="landing-shell">
+      <div class="landing-card hologram-panel space-y-3">
+        <div class="flex items-center justify-between">
+          <div>
+            <div class="text-xs uppercase text-gray-400 tracking-wide">Block Buster</div>
+            <div class="text-2xl font-semibold text-white">Choosing the right cockpit…</div>
+          </div>
+          <div id="landing-pill" class="chip">Checking</div>
+        </div>
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div class="panel-blade p-3">
+            <div class="text-xs text-gray-400">Genesis</div>
+            <div class="flex items-center gap-2 text-lg font-semibold" id="landing-genesis">
+              <span class="status-dot status-warn"></span> probing…
+            </div>
+            <div class="subtext" id="landing-genesis-note">Detecting block 0</div>
+          </div>
+          <div class="panel-blade p-3">
+            <div class="text-xs text-gray-400">Gates</div>
+            <div class="flex items-center gap-2 text-lg font-semibold" id="landing-gates">
+              <span class="status-dot status-warn"></span> checking…
+            </div>
+            <div class="subtext" id="landing-gates-note">Governor evaluation</div>
+          </div>
+          <div class="panel-blade p-3">
+            <div class="text-xs text-gray-400">Wallet</div>
+            <div class="flex items-center gap-2 text-lg font-semibold" id="landing-wallet">
+              <span class="status-dot status-gated"></span> provisioning…
+            </div>
+            <div class="subtext" id="landing-wallet-note">Ensuring local node wallet</div>
+          </div>
+        </div>
+        <div class="subtext" id="landing-hint">Detecting gate state to pick the right page.</div>
+      </div>
+    </div>
+    <script>
+      const status = {
+        set(id, tone, text, note) {
+          const wrap = document.getElementById(id);
+          const dot = wrap?.querySelector('.status-dot');
+          if (wrap && text) wrap.innerHTML = `<span class="status-dot ${tone}"></span> ${text}`;
+          if (note) {
+            const noteEl = document.getElementById(`${id}-note`);
+            if (noteEl) noteEl.textContent = note;
+          }
+        }
+      };
+
+      (async function decideLanding() {
+        const hint = document.getElementById('landing-hint');
+        const pill = document.getElementById('landing-pill');
+        const dash = 'public/dashboard.html';
+        const network = 'public/network.html';
+        const timeout = setTimeout(() => { window.location.href = network; }, 4500);
+        try {
+          const { apiBase } = resolveApiConfig();
+          hint.textContent = `Checking ${apiBase} …`;
+          // 1) Genesis + network health
+          const netRes = await fetch(`${apiBase}/theblock/network`, { cache: 'no-store' });
+          let genesisReady = false;
+          if (netRes.ok) {
+            const net = await netRes.json();
+            genesisReady = !!net.genesis_ready || (net.block_height ?? 0) > 0;
+            status.set('landing-genesis', genesisReady ? 'status-live' : 'status-warn', genesisReady ? 'ready' : 'pending', genesisReady ? `height ${net.block_height}` : 'waiting for block 0');
+          } else {
+            status.set('landing-genesis', 'status-warn', 'unreachable', 'Node RPC unreachable');
+          }
+
+          // 2) Wallet bootstrap
+          try {
+            const wallet = await fetch(`${apiBase}/wallet/ensure`, { method: 'POST', cache: 'no-store' }).then(r => r.json());
+            const funded = !!wallet.funded;
+            status.set('landing-wallet', funded ? 'status-live' : 'status-gated', funded ? 'funded' : 'needs funding', wallet.wallet || 'local wallet');
+          } catch {
+            status.set('landing-wallet', 'status-warn', 'error', 'Could not prepare wallet');
+          }
+
+          // 3) Gates
+          const gateRes = await fetch(`${apiBase}/theblock/gates`, { cache: 'no-store' });
+          clearTimeout(timeout);
+          if (gateRes.ok) {
+            const gates = await gateRes.json();
+            const open = Array.isArray(gates) && gates.length > 0 && gates.every(g => (g.state || '').toLowerCase() === 'trade');
+            status.set('landing-gates', open ? 'status-live' : 'status-gated', open ? 'open' : 'gated', open ? 'All markets live' : 'Network health first');
+            pill.textContent = open ? 'Markets live' : 'Markets gated';
+            hint.textContent = open ? 'Routing to dashboard…' : 'Routing to network health…';
+            window.location.href = open ? dash : `${network}?gated=1`;
+            return;
+          }
+        } catch (_) {
+          clearTimeout(timeout);
+        }
+        pill.textContent = 'Fallback';
+        hint.textContent = 'Opening network health for manual checks.';
+        window.location.href = network;
+      })();
+    </script>
+  </body>
+</html>

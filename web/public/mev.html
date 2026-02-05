@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>MEV Shield · Block Buster</title>
+    <link rel="stylesheet" href="css/tailwind.min.css?v=20260205">
+    <link rel="stylesheet" href="dashboard.css?v=20260205">
+    <script src="runtime-config.js?v=20260205"></script>
+    <script src="js/utils.js?v=20260205"></script>
+    <script src="js/shell.js?v=20260205"></script>
+    <script src="js/nav.js?v=20260205"></script>
+    <script src="js/walkthrough.js?v=20260205"></script>
+</head>
+<body class="font-display min-h-screen relative">
+    <a href="#main-content" class="sr-only">Skip to content</a>
+    <main id="main-content" class="page-content space-y-5">
+        <div class="section-header" id="breadcrumb">
+            <div class="section-meta">
+                <span class="text-xs text-gray-400">Analyze</span>
+                <span class="text-xs text-gray-500">/</span>
+                <span class="text-xs">MEV Shield</span>
+                <span id="mev-pill" class="status-pill status-warn" aria-live="polite">PENDING</span>
+                <span id="mev-schema" class="micro-badge">schema —</span>
+            </div>
+            <div class="section-meta">
+                <span id="mev-lag" class="micro-badge">lag —</span>
+                <span id="mev-errors" class="micro-badge">errs —</span>
+                <span id="mev-updated" class="chip" aria-live="polite">Waiting for data</span>
+            </div>
+        </div>
+
+        <div class="hero-strip">
+            <div class="kpi">
+                <div class="kpi-label">Shield Status</div>
+                <div id="mev-status" class="kpi-value">—</div>
+                <div class="kpi-meta" id="mev-status-meta">Last health check pending</div>
+            </div>
+            <div class="kpi">
+                <div class="kpi-label">Attacks Blocked</div>
+                <div id="mev-blocked" class="kpi-value">—</div>
+                <div class="kpi-meta">Since start</div>
+            </div>
+            <div class="kpi">
+                <div class="kpi-label">Saved Value (BLOCK)</div>
+                <div id="mev-saved" class="kpi-value">—</div>
+                <div class="kpi-meta">Estimated prevented loss</div>
+            </div>
+            <div class="kpi">
+                <div class="kpi-label">Latency</div>
+                <div id="mev-latency" class="kpi-value">—</div>
+                <div class="kpi-meta">ms to shield</div>
+            </div>
+        </div>
+
+        <section class="panel-blade space-y-3">
+            <div class="panel-header">
+                <div>
+                    <div class="panel-title">Alpha Signals</div>
+                    <div class="panel-subtitle">High-confidence catalysts worth tracking.</div>
+                </div>
+                <div class="panel-actions">
+                    <span class="micro-badge" id="alpha-source">/alpha/signals —</span>
+                    <button id="alpha-retry" class="micro-badge">Retry</button>
+                </div>
+            </div>
+            <ul id="alpha-list" class="space-y-2 text-sm"></ul>
+            <div class="empty-state" id="alpha-empty">No signals yet.</div>
+        </section>
+
+        <section class="panel-blade space-y-3">
+            <div class="panel-header">
+                <div>
+                    <div class="panel-title">Opportunities</div>
+                    <div class="panel-subtitle">Flash-loan and arbitrage chances.</div>
+                </div>
+                <div class="panel-actions">
+                    <span class="micro-badge" id="opp-source">/mev/opportunities —</span>
+                    <button id="opp-retry" class="micro-badge">Retry</button>
+                </div>
+            </div>
+            <div class="hidden md:block overflow-x-auto">
+                <table class="table">
+                    <thead>
+                        <tr>
+                            <th>Token</th>
+                            <th>Edge</th>
+                            <th>Potential</th>
+                            <th>Exec Time</th>
+                            <th>Updated</th>
+                        </tr>
+                    </thead>
+                    <tbody id="opp-table">
+                        <tr><td colspan="5" class="py-3 text-center text-gray-500">Loading…</td></tr>
+                    </tbody>
+                </table>
+            </div>
+            <div class="space-y-2 md:hidden" id="opp-cards">
+                <div class="mobile-card text-center text-gray-500">Loading…</div>
+            </div>
+        </section>
+
+        <section class="panel-blade space-y-3" id="mev-alerts">
+            <div class="panel-header">
+                <div class="panel-title">Alerts</div>
+                <div class="panel-subtitle">Shield inactive, latency spikes, failure rate.</div>
+            </div>
+            <ul class="space-y-1 text-sm" id="alert-list">
+                <li class="text-gray-500">Awaiting telemetry…</li>
+            </ul>
+        </section>
+    </main>
+    <script src="js/utils.js?v=20260205"></script>
+    <script src="js/nav.js?v=20260205"></script>
+    <script src="js/walkthrough.js?v=20260205"></script>
+    <script src="js/footer.js?v=20260205"></script>
+    <script>
+        const { apiBase } = resolveApiConfig();
+        const fmt = (v, digits=2) => Number(v||0).toLocaleString(undefined, { maximumFractionDigits: digits });
+        const alerts = document.getElementById('alert-list');
+        const logError = createErrorLogger({ drawerId: '', listId: 'alert-list', clearId: '', retryId: '', onRetry: () => {} });
+
+        function setStatus(tone, label) {
+            const pill = document.getElementById('mev-pill');
+            pill.classList.remove('status-good','status-warn','status-bad','status-info');
+            pill.classList.add(`status-${tone}`);
+            pill.textContent = label;
+        }
+
+        function renderStatus(data, latencyMs) {
+            document.getElementById('mev-status').textContent = data.status || '—';
+            document.getElementById('mev-status-meta').textContent = `Last check ${new Date().toLocaleTimeString()}`;
+            document.getElementById('mev-blocked').textContent = fmt(data.blocked);
+            document.getElementById('mev-saved').textContent = fmt(data.saved_value);
+            document.getElementById('mev-latency').textContent = `${Math.round(latencyMs)} ms`;
+            document.getElementById('mev-updated').textContent = `Updated ${new Date().toLocaleTimeString()}`;
+            setStatus(data.active ? 'good' : 'warn', data.active ? 'ACTIVE' : 'INACTIVE');
+        }
+
+        function renderSignals(list) {
+            const ul = document.getElementById('alpha-list');
+            const empty = document.getElementById('alpha-empty');
+            ul.innerHTML = '';
+            if (!list || !list.length) { empty.style.display = 'block'; return; }
+            empty.style.display = 'none';
+            list.forEach(sig => {
+                const li = document.createElement('li');
+                li.className = 'panel-blade';
+                li.innerHTML = `<div class="flex justify-between"><div class="font-semibold">${sig.token || sig.topic || '—'}</div><span class="chip">${fmt(sig.score || sig.edge || 0, 1)}</span></div><div class="text-xs text-gray-400">${sig.reason || '—'}</div>`;
+                ul.appendChild(li);
+            });
+        }
+
+        function renderOpps(list) {
+            const table = document.getElementById('opp-table');
+            const cards = document.getElementById('opp-cards');
+            table.innerHTML = '';
+            cards.innerHTML = '';
+            if (!list || !list.length) {
+                table.innerHTML = '<tr><td colspan="5" class="py-3 text-center text-gray-500">No opportunities</td></tr>';
+                cards.innerHTML = '<div class="mobile-card text-center text-gray-500">No opportunities</div>';
+                return;
+            }
+            list.forEach(item => {
+                const tr = document.createElement('tr');
+                tr.innerHTML = `<td class="py-2">${item.token || '—'}</td><td class="py-2">${item.edge || '—'}</td><td class="py-2">${fmt(item.potential)}</td><td class="py-2">${item.exec_time || '—'}</td><td class="py-2">${new Date(item.updated_at || Date.now()).toLocaleTimeString()}</td>`;
+                table.appendChild(tr);
+                const card = document.createElement('div');
+                card.className = 'mobile-card';
+                card.innerHTML = `<div class="flex justify-between"><div class="font-semibold">${item.token || '—'}</div><span class="chip">${fmt(item.potential)}</span></div><div class="text-xs text-gray-400">${item.edge || '—'} • ${item.exec_time || '—'}</div>`;
+                cards.appendChild(card);
+            });
+        }
+
+        async function loadMev(isRetry=false) {
+            try {
+                const { res, latencyMs } = await fetchWithTiming(`${apiBase}/mev/status`, { cache: 'no-store' });
+                if (!res.ok) throw new Error('status failed');
+                const data = await res.json();
+                renderStatus(data, latencyMs);
+                setProvenanceChip('mev-schema', '/manifest', latencyMs);
+            } catch (e) {
+                setStatus('warn', isRetry ? 'RETRY' : 'STALE');
+                logError('/mev/status', e.message || 'error');
+            }
+        }
+
+        async function loadSignals() {
+            try {
+                const { res, latencyMs } = await fetchWithTiming(`${apiBase}/alpha/signals`, { cache: 'no-store' });
+                if (res.ok) {
+                    const data = await res.json();
+                    renderSignals(data.items || data);
+                    setProvenanceChip('alpha-source', '/alpha/signals', latencyMs);
+                }
+            } catch (e) {
+                logError('/alpha/signals', e.message || 'error');
+            }
+        }
+
+        async function loadOpps() {
+            try {
+                const { res, latencyMs } = await fetchWithTiming(`${apiBase}/mev/opportunities`, { cache: 'no-store' });
+                if (res.ok) {
+                    const data = await res.json();
+                    renderOpps(data.items || data);
+                    setProvenanceChip('opp-source', '/mev/opportunities', latencyMs);
+                }
+            } catch (e) {
+                logError('/mev/opportunities', e.message || 'error');
+            }
+        }
+
+        async function loadAlerts() {
+            const items = [];
+            const status = document.getElementById('mev-status')?.textContent || '';
+            if (status.toLowerCase() !== 'active') items.push('Shield inactive');
+            const lag = document.getElementById('mev-lag')?.textContent || '';
+            if (lag.includes('ms')) items.push(`Latency ${lag}`);
+            alerts.innerHTML = items.length ? items.map(i => `<li>${i}</li>`).join('') : '<li class="text-gray-500">All clear.</li>';
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            loadMev();
+            loadSignals();
+            loadOpps();
+            loadAlerts();
+            document.getElementById('alpha-retry')?.addEventListener('click', () => loadSignals(true));
+            document.getElementById('opp-retry')?.addEventListener('click', () => loadOpps(true));
+            setInterval(loadMev, 15000);
+            setInterval(loadSignals, 20000);
+            setInterval(loadOpps, 20000);
+            setInterval(loadAlerts, 5000);
+        });
+    </script>
+</body>
+</html>

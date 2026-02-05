@@ -1,0 +1,99 @@
+"""Simplistic in-memory trade engine for paper trading."""
+
+from dataclasses import dataclass, field, asdict
+from typing import List, Optional
+import asyncio
+import time
+
+from .risk import RiskManager
+from ..exchange import AbstractConnector, ExecutionResult
+from ..persistence import DAL, DBOrder
+from ..types import Side
+
+
+
+
+@dataclass
+class Order:
+    token: str
+    quantity: float
+    price: float
+    slippage: float
+    fee: float
+    side: Side
+    id: int
+    timestamp: int
+    status: str = "closed"
+
+
+@dataclass
+class TradeEngine:
+    """Execute trades via connector and track orders."""
+
+    risk: RiskManager
+    connector: AbstractConnector
+    dal: DAL
+    next_id: int = 1
+    orders: List[Order] = field(default_factory=list)
+    # Lazily initialised lock; creating an asyncio.Lock at import time requires
+    # a running event loop which is not available in synchronous contexts like
+    # our tests.  We therefore create the lock on first use inside
+    # ``place_order`` when an event loop is guaranteed to exist.
+    lock: Optional[asyncio.Lock] = None
+
+    def __post_init__(self) -> None:
+        for token, pos in self.dal.load_positions().items():
+            self.risk.positions[token] = pos
+
+    async def place_order(
+        self, token: str, qty: float, side: Side, limit: Optional[float] = None
+    ) -> Order:
+        # Initialise the lock lazily to avoid requiring an event loop during
+        # object construction. ``asyncio.Lock`` binds to the currently running
+        # loop, so creating it here ensures one is active.
+        if self.lock is None:
+            self.lock = asyncio.Lock()
+
+        async with self.lock:
+            execution: ExecutionResult = await self.connector.place_order(token, qty, side, limit)
+            order = Order(
+                token=token,
+                quantity=qty,
+                price=execution.price,
+                slippage=execution.slippage,
+                fee=execution.fee,
+                side=side,
+                id=self.next_id,
+                timestamp=int(time.time()),
+                status="closed",
+            )
+            self.next_id += 1
+            self.orders.append(order)
+            self.dal.add_order(
+                DBOrder(
+                    id=None,
+                    token=token,
+                    quantity=qty,
+                    side=side.value,
+                    price=order.price,
+                    fee=order.fee,
+                    slippage=order.slippage,
+                )
+            )
+            self.risk.record_trade(token, qty, execution.price, side, execution.fee)
+            self.dal.upsert_position(self.risk.positions.get(token))
+            self.dal.save_pnl_snapshot(self._pnl_snapshot())
+            return order
+
+    def list_orders(self) -> List[Order]:
+        return list(self.orders)
+
+    def list_positions(self) -> dict:
+        return {k: asdict(v) for k, v in self.risk.positions.items()}
+
+    def _pnl_snapshot(self) -> dict:
+        return {
+            "total_realized": self.risk.total_realized(),
+            "total_unrealized": self.risk.total_unrealized(),
+            "equity": self.risk.portfolio_value(),
+        }

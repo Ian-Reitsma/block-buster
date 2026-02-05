@@ -1,0 +1,12 @@
+# Python virtual environments and build artifacts
+venv/
+**/__pycache__/
+**/*.py[cod]
+.pytest_cache/
+__pycache__/
+# Node dependencies
+node_modules/
+# macOS artifacts
+.DS_Store
+# Logs
+*.log
