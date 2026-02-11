@@ -15,9 +15,9 @@ class DummyConfig:
     tls_key_path = None
     cert_path = None
     key_path = None
-    timeout = 5
+    timeout_seconds = 5.0
     max_retries = 0
-    retry_delay = 0.01
+    backoff_base = 0.01
 
 
 class FakeRPC:
