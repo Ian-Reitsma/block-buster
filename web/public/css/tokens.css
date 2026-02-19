@@ -1,0 +1,111 @@
+/**
+ * Block-Buster Design Tokens
+ * Single source of truth for all design decisions
+ * Referenced by Tailwind config and custom CSS
+ */
+
+:root {
+  /* ===== COLOR ROLES ===== */
+  
+  /* Backgrounds */
+  --bg: 5 9 16; /* #050910 - base background */
+  --panel: 12 18 28; /* rgb(12, 18, 28) - panel-black */
+  --panel-2: 17 24 39; /* slightly lighter panel variant */
+  --panel-3: 31 41 55; /* lightest panel (gray-700) */
+  
+  /* Borders */
+  --border: 55 65 81; /* gray-700 */
+  --border-light: 75 85 99; /* gray-600 */
+  --border-dim: 31 41 55 / 0.5; /* gray-700/50 */
+  
+  /* Text */
+  --text: 255 255 255; /* white */
+  --text-muted: 156 163 175; /* gray-400 */
+  --text-dim: 107 114 128; /* gray-500 */
+  --text-dimmer: 75 85 99; /* gray-600 */
+  
+  /* Accents */
+  --accent: 251 191 36; /* amber-400 - primary brand */
+  --accent-bright: 255 183 77; /* #ffb74d - blade-amber */
+  --accent-alt: 34 211 238; /* cyan-400 - secondary */
+  --accent-alt-bright: 128 242 255; /* #80f2ff - cyan-glow */
+  
+  /* Primary Palette */
+  --purple: 168 85 247; /* block-purple */
+  --amber: 251 191 36; /* block-amber */
+  --cyan: 34 211 238; /* block-cyan */
+  --green: 74 222 128; /* block-green */
+  --blue: 59 130 246; /* block-blue */
+  
+  /* Semantic Status Colors */
+  --good: 63 216 173; /* #3fd8ad - status ok */
+  --warn: 240 165 0; /* #f0a500 - status warn */
+  --bad: 239 91 107; /* #ef5b6b - status bad */
+  --info: 92 169 255; /* #5ca9ff - status info */
+  
+  /* ===== DENSITY / SPACING ===== */
+  
+  /* Radius */
+  --radius-sm: 0.25rem; /* 4px */
+  --radius-md: 0.5rem; /* 8px */
+  --radius-lg: 0.75rem; /* 12px */
+  --radius-xl: 0.875rem; /* 14px */
+  --radius-2xl: 1rem; /* 16px */
+  
+  /* Spacing scale (beyond Tailwind defaults) */
+  --space-1: 0.25rem; /* 4px */
+  --space-2: 0.5rem; /* 8px */
+  --space-3: 0.75rem; /* 12px */
+  --space-4: 1rem; /* 16px */
+  --space-5: 1.25rem; /* 20px */
+  --space-6: 1.5rem; /* 24px */
+  --space-8: 2rem; /* 32px */
+  
+  /* Shadows */
+  --shadow-1: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1);
+  --shadow-2: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+  --shadow-3: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+  --shadow-glow-amber: 0 0 10px rgba(251, 191, 36, 0.2);
+  --shadow-glow-cyan: 0 0 10px rgba(34, 211, 238, 0.2);
+  
+  /* ===== MOTION ===== */
+  
+  /* Easing */
+  --ease: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-in: cubic-bezier(0.4, 0, 1, 1);
+  --ease-out: cubic-bezier(0, 0, 0.2, 1);
+  --ease-bounce: cubic-bezier(0.68, -0.55, 0.265, 1.55);
+  
+  /* Duration */
+  --dur-1: 150ms;
+  --dur-2: 200ms;
+  --dur-3: 300ms;
+  --dur-4: 500ms;
+  --dur-5: 700ms;
+  
+  /* ===== TYPOGRAPHY ===== */
+  
+  /* Font families (referenced in Tailwind) */
+  --font-display: 'Space Grotesk', sans-serif;
+  --font-body: 'IBM Plex Sans', sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+  
+  /* Font sizes (semantic) */
+  --text-xs: 11px;
+  --text-sm: 13px;
+  --text-md: 15px;
+  --text-lg: 18px;
+  --text-xl: 22px;
+  --text-kpi: 30px;
+}
+
+/* Prefers reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-1: 1ms;
+    --dur-2: 1ms;
+    --dur-3: 1ms;
+    --dur-4: 1ms;
+    --dur-5: 1ms;
+  }
+}

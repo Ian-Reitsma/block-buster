@@ -39,6 +39,7 @@ from .client import TheBlockClient
 from .feature_bridge import create_feature_engine
 from .integration import TheBlockIntegration
 from .accounting import TheBlockAccountant
+from .rpc_client import RPCError as NodeRPCError
 
 logger = logging.getLogger(__name__)
 
@@ -579,10 +580,15 @@ def _health_snapshot() -> Dict[str, Any]:
         simple_db_metrics.setdefault("compaction_queue", 0)
 
     genesis_ready = None
+    rpc_connected = False
+    rpc_height = None
     if the_block_client is not None:
         try:
-            genesis_ready = the_block_client.consensus.block_height() > 0
+            rpc_height = the_block_client.consensus.block_height()
+            rpc_connected = True
+            genesis_ready = rpc_height > 0
         except Exception:
+            rpc_connected = False
             genesis_ready = None
     return {
         "status": "ok",
@@ -595,6 +601,8 @@ def _health_snapshot() -> Dict[str, Any]:
         "recent_errors": recent_errors,
         "bootstrap": {
             "genesis_ready": genesis_ready,
+            "rpc_connected": rpc_connected,
+            "block_height": rpc_height,
             "wallet": _wallet_status(the_block_client) if the_block_client else {"connected": False},
         },
     }
@@ -740,6 +748,43 @@ def get_markets(_request):
 def get_gates(_request):
     snap = _snapshot_or_503()
     return snap.get("gates", [])
+
+
+@http_server.post("/rpc")
+def proxy_rpc(request):
+    """JSON-RPC passthrough so the frontend can reuse node methods via the dashboard host."""
+    if the_block_client is None:
+        raise HTTPError(503, "rpc_not_initialized")
+    payload = request.json()
+    if payload is None:
+        raise HTTPError(400, "invalid_rpc_payload")
+
+    def _handle_call(call: Dict[str, Any]) -> Dict[str, Any]:
+        method = call.get("method")
+        if not method:
+            return {
+                "jsonrpc": "2.0",
+                "id": call.get("id"),
+                "error": {"code": -32600, "message": "method is required"},
+            }
+        params = call.get("params")
+        response = {"jsonrpc": "2.0", "id": call.get("id")}
+        try:
+            result = the_block_client.rpc.call(method, params)
+            response["result"] = result
+        except NodeRPCError as exc:
+            response["error"] = {
+                "code": getattr(exc, "code", -32000),
+                "message": getattr(exc, "message", str(exc)),
+                "data": getattr(exc, "data", None),
+            }
+        except Exception as exc:  # pragma: no cover - defensive
+            response["error"] = {"code": -32603, "message": str(exc)}
+        return response
+
+    if isinstance(payload, list):
+        return [_handle_call(call if isinstance(call, dict) else {}) for call in payload]
+    return _handle_call(payload if isinstance(payload, dict) else {})
 
 
 @http_server.get("/theblock/providers")

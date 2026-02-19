@@ -1,0 +1,466 @@
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+import RpcClient from '../src/rpc.js';
+import ApiClient from '../src/api.js';
+
+// Mock ApiClient
+vi.mock('../src/api.js', () => {
+  return {
+    default: vi.fn().mockImplementation(() => ({
+      post: vi.fn(),
+    })),
+  };
+});
+
+describe('RpcClient', () => {
+  let rpc;
+  let mockApiClient;
+
+  beforeEach(() => {
+    // Reset mocks
+    vi.clearAllMocks();
+
+    // Create RPC client
+    rpc = new RpcClient('http://localhost:5000', {
+      timeout: 5000,
+      retries: 2,
+    });
+
+    // Get mocked ApiClient instance
+    mockApiClient = rpc.apiClient;
+  });
+
+  describe('constructor', () => {
+    it('should initialize with base URL and options', () => {
+      expect(rpc.baseUrl).toBe('http://localhost:5000');
+      expect(rpc.requestId).toBe(1);
+      expect(rpc.apiClient).toBeDefined();
+    });
+  });
+
+  describe('call', () => {
+    it('should make JSON-RPC request', async () => {
+      const mockResponse = {
+        jsonrpc: '2.0',
+        result: { height: 12345 },
+        id: 1,
+      };
+
+      mockApiClient.post.mockResolvedValue(mockResponse);
+
+      const result = await rpc.call('consensus.block_height', []);
+
+      expect(result).toEqual({ height: 12345 });
+      expect(mockApiClient.post).toHaveBeenCalledWith('/rpc', {
+        jsonrpc: '2.0',
+        method: 'consensus.block_height',
+        params: [],
+        id: 1,
+      });
+    });
+
+    it('should increment request ID', async () => {
+      const mockResponse = {
+        jsonrpc: '2.0',
+        result: {},
+        id: 1,
+      };
+
+      mockApiClient.post.mockResolvedValue(mockResponse);
+
+      await rpc.call('test.method1');
+      await rpc.call('test.method2');
+
+      expect(mockApiClient.post).toHaveBeenNthCalledWith(1, '/rpc', {
+        jsonrpc: '2.0',
+        method: 'test.method1',
+        params: [],
+        id: 1,
+      });
+
+      expect(mockApiClient.post).toHaveBeenNthCalledWith(2, '/rpc', {
+        jsonrpc: '2.0',
+        method: 'test.method2',
+        params: [],
+        id: 2,
+      });
+    });
+
+    it('should handle RPC error responses', async () => {
+      const mockResponse = {
+        jsonrpc: '2.0',
+        error: {
+          code: -32600,
+          message: 'Invalid Request',
+           { reason: 'Method not found' },
+        },
+        id: 1,
+      };
+
+      mockApiClient.post.mockResolvedValue(mockResponse);
+
+      await expect(rpc.call('invalid.method')).rejects.toThrow('Invalid Request');
+    });
+
+    it('should pass params to RPC call', async () => {
+      const mockResponse = {
+        jsonrpc: '2.0',
+        result: { balance: 1000 },
+        id: 1,
+      };
+
+      mockApiClient.post.mockResolvedValue(mockResponse);
+
+      await rpc.call('ledger.balance', ['account-123']);
+
+      expect(mockApiClient.post).toHaveBeenCalledWith(
+        '/rpc',
+        expect.objectContaining({
+          params: ['account-123'],
+        }),
+      );
+    });
+  });
+
+  describe('batch', () => {
+    it('should batch multiple RPC calls', async () => {
+      const mockResponse = [
+        { jsonrpc: '2.0', result: { height: 12345 }, id: 1 },
+        { jsonrpc: '2.0', result: { tps: 1250 }, id: 2 },
+        { jsonrpc: '2.0', result: { total: 64 }, id: 3 },
+      ];
+
+      mockApiClient.post.mockResolvedValue(mockResponse);
+
+      const calls = [
+        { method: 'consensus.block_height' },
+        { method: 'consensus.tps' },
+        { method: 'peer.stats' },
+      ];
+
+      const results = await rpc.batch(calls);
+
+      expect(results).toHaveLength(3);
+      expect(results[0].result).toEqual({ height: 12345 });
+      expect(results[1].result).toEqual({ tps: 1250 });
+      expect(results[2].result).toEqual({ total: 64 });
+    });
+
+    it('should handle mixed success and error responses', async () => {
+      const mockResponse = [
+        { jsonrpc: '2.0', result: { height: 12345 }, id: 1 },
+        {
+          jsonrpc: '2.0',
+          error: { code: -32600, message: 'Invalid method' },
+          id: 2,
+        },
+        { jsonrpc: '2.0', result: { total: 64 }, id: 3 },
+      ];
+
+      mockApiClient.post.mockResolvedValue(mockResponse);
+
+      const calls = [
+        { method: 'consensus.block_height' },
+        { method: 'invalid.method' },
+        { method: 'peer.stats' },
+      ];
+
+      const results = await rpc.batch(calls);
+
+      expect(results[0].result).toEqual({ height: 12345 });
+      expect(results[1].error).toBeDefined();
+      expect(results[1].error.message).toBe('Invalid method');
+      expect(results[2].result).toEqual({ total: 64 });
+    });
+
+    it('should send batch request with correct payload', async () => {
+      mockApiClient.post.mockResolvedValue([]);
+
+      const calls = [
+        { method: 'method1', params: ['param1'] },
+        { method: 'method2', params: ['param2'] },
+      ];
+
+      await rpc.batch(calls);
+
+      expect(mockApiClient.post).toHaveBeenCalledWith('/rpc', [
+        { jsonrpc: '2.0', method: 'method1', params: ['param1'], id: expect.any(Number) },
+        { jsonrpc: '2.0', method: 'method2', params: ['param2'], id: expect.any(Number) },
+      ]);
+    });
+  });
+
+  describe('consensus namespace', () => {
+    it('should get block height', async () => {
+      mockApiClient.post.mockResolvedValue({
+        jsonrpc: '2.0',
+        result: { height: 12345, finalized_height: 12340 },
+        id: 1,
+      });
+
+      const result = await rpc.getBlockHeight();
+
+      expect(result).toEqual({ height: 12345, finalized_height: 12340 });
+      expect(mockApiClient.post).toHaveBeenCalledWith(
+        '/rpc',
+        expect.objectContaining({
+          method: 'consensus.block_height',
+        }),
+      );
+    });
+
+    it('should get TPS', async () => {
+      mockApiClient.post.mockResolvedValue({
+        jsonrpc: '2.0',
+        result: { tps: 1250, avgBlockTime: 2.1 },
+        id: 1,
+      });
+
+      const result = await rpc.getTPS();
+
+      expect(result).toEqual({ tps: 1250, avgBlockTime: 2.1 });
+    });
+
+    it('should get block by height', async () => {
+      mockApiClient.post.mockResolvedValue({
+        jsonrpc: '2.0',
+        result: { height: 100, hash: '0x123', transactions: [] },
+        id: 1,
+      });
+
+      const result = await rpc.getBlock(100);
+
+      expect(result.height).toBe(100);
+      expect(mockApiClient.post).toHaveBeenCalledWith(
+        '/rpc',
+        expect.objectContaining({
+          method: 'consensus.block',
+          params: [100],
+        }),
+      );
+    });
+  });
+
+  describe('ledger namespace', () => {
+    it('should get account balance', async () => {
+      mockApiClient.post.mockResolvedValue({
+        jsonrpc: '2.0',
+        result: { account: '0x123', balance: 1000, nonce: 42 },
+        id: 1,
+      });
+
+      const result = await rpc.getBalance('0x123');
+
+      expect(result.balance).toBe(1000);
+      expect(mockApiClient.post).toHaveBeenCalledWith(
+        '/rpc',
+        expect.objectContaining({
+          method: 'ledger.balance',
+          params: ['0x123'],
+        }),
+      );
+    });
+
+    it('should get transactions', async () => {
+      mockApiClient.post.mockResolvedValue({
+        jsonrpc: '2.0',
+        result: { transactions: [], total: 0 },
+        id: 1,
+      });
+
+      const result = await rpc.getTransactions({ limit: 10 });
+
+      expect(result.transactions).toBeDefined();
+      expect(mockApiClient.post).toHaveBeenCalledWith(
+        '/rpc',
+        expect.objectContaining({
+          method: 'ledger.transactions',
+          params: [{ limit: 10 }],
+        }),
+      );
+    });
+  });
+
+  describe('peer namespace', () => {
+    it('should list peers', async () => {
+      mockApiClient.post.mockResolvedValue({
+        jsonrpc: '2.0',
+        result: { peers: [{ id: 'peer-1', address: '192.168.1.100' }] },
+        id: 1,
+      });
+
+      const result = await rpc.listPeers();
+
+      expect(result.peers).toHaveLength(1);
+    });
+
+    it('should get peer stats', async () => {
+      mockApiClient.post.mockResolvedValue({
+        jsonrpc: '2.0',
+        result: { total: 64, active: 58, avgLatency: 22 },
+        id: 1,
+      });
+
+      const result = await rpc.getPeerStats();
+
+      expect(result.total).toBe(64);
+      expect(result.active).toBe(58);
+    });
+  });
+
+  describe('scheduler namespace', () => {
+    it('should get scheduler stats', async () => {
+      mockApiClient.post.mockResolvedValue({
+        jsonrpc: '2.0',
+        result: { queue_size: 42, active_jobs: 10 },
+        id: 1,
+      });
+
+      const result = await rpc.getSchedulerStats();
+
+      expect(result.queue_size).toBe(42);
+    });
+  });
+
+  describe('governance namespace', () => {
+    it('should get proposals', async () => {
+      mockApiClient.post.mockResolvedValue({
+        jsonrpc: '2.0',
+        result: { proposals: [] },
+        id: 1,
+      });
+
+      const result = await rpc.getProposals({ status: 'active' });
+
+      expect(result.proposals).toBeDefined();
+    });
+
+    it('should get governor status', async () => {
+      mockApiClient.post.mockResolvedValue({
+        jsonrpc: '2.0',
+        result: { active_gates: 5 },
+        id: 1,
+      });
+
+      const result = await rpc.getGovernorStatus();
+
+      expect(result.active_gates).toBe(5);
+    });
+  });
+
+  describe('energy namespace', () => {
+    it('should get energy market state', async () => {
+      mockApiClient.post.mockResolvedValue({
+        jsonrpc: '2.0',
+        result: { totalSupply: 50000, providers: 42 },
+        id: 1,
+      });
+
+      const result = await rpc.getEnergyMarketState();
+
+      expect(result.providers).toBe(42);
+    });
+
+    it('should list energy providers', async () => {
+      mockApiClient.post.mockResolvedValue({
+        jsonrpc: '2.0',
+        result: { providers: [] },
+        id: 1,
+      });
+
+      const result = await rpc.listEnergyProviders({ limit: 50 });
+
+      expect(result.providers).toBeDefined();
+    });
+  });
+
+  describe('helper methods', () => {
+    it('should get dashboard metrics via batch call', async () => {
+      const mockBatchResponse = [
+        { jsonrpc: '2.0', result: { height: 12345, finalized_height: 12340 }, id: 1 },
+        { jsonrpc: '2.0', result: { tps: 1250, avgBlockTime: 2.1 }, id: 2 },
+        { jsonrpc: '2.0', result: { total: 64, active: 58, avgLatency: 22 }, id: 3 },
+        { jsonrpc: '2.0', result: { queue_size: 10 }, id: 4 },
+        { jsonrpc: '2.0', result: { active_gates: 3 }, id: 5 },
+      ];
+
+      mockApiClient.post.mockResolvedValue(mockBatchResponse);
+
+      const result = await rpc.getDashboardMetrics();
+
+      expect(result.blockHeight).toBe(12345);
+      expect(result.finalizedHeight).toBe(12340);
+      expect(result.tps).toBe(1250);
+      expect(result.peers).toBe(64);
+      expect(result.activePeers).toBe(58);
+      expect(result.avgLatency).toBe(22);
+      expect(result.schedulerQueueSize).toBe(10);
+      expect(result.governorActiveGates).toBe(3);
+      expect(result.errors).toEqual([]);
+    });
+
+    it('should handle partial errors in dashboard metrics', async () => {
+      const mockBatchResponse = [
+        { jsonrpc: '2.0', result: { height: 12345, finalized_height: 12340 }, id: 1 },
+        { jsonrpc: '2.0', error: { code: -32600, message: 'TPS unavailable' }, id: 2 },
+        { jsonrpc: '2.0', result: { total: 64 }, id: 3 },
+        { jsonrpc: '2.0', result: { queue_size: 10 }, id: 4 },
+        { jsonrpc: '2.0', result: { active_gates: 3 }, id: 5 },
+      ];
+
+      mockApiClient.post.mockResolvedValue(mockBatchResponse);
+
+      const result = await rpc.getDashboardMetrics();
+
+      expect(result.blockHeight).toBe(12345);
+      expect(result.tps).toBe(0); // Fallback value
+      expect(result.errors).toHaveLength(1);
+      expect(result.errors[0].message).toBe('TPS unavailable');
+    });
+
+    it('should get network overview via batch call', async () => {
+      const mockBatchResponse = [
+        { jsonrpc: '2.0', result: { peers: [{ id: 'p1' }] }, id: 1 },
+        { jsonrpc: '2.0', result: { total: 64 }, id: 2 },
+        { jsonrpc: '2.0', result: { validators: [{ id: 'v1' }] }, id: 3 },
+      ];
+
+      mockApiClient.post.mockResolvedValue(mockBatchResponse);
+
+      const result = await rpc.getNetworkOverview();
+
+      expect(result.peers).toHaveLength(1);
+      expect(result.stats.total).toBe(64);
+      expect(result.validators).toHaveLength(1);
+    });
+
+    it('should get market states via batch call', async () => {
+      const mockBatchResponse = [
+        { jsonrpc: '2.0', result: { totalSupply: 50000 }, id: 1 },
+        { jsonrpc: '2.0', result: { active_jobs: 20 }, id: 2 },
+        { jsonrpc: '2.0', result: { total_bids: 150 }, id: 3 },
+      ];
+
+      mockApiClient.post.mockResolvedValue(mockBatchResponse);
+
+      const result = await rpc.getMarketStates();
+
+      expect(result.energy.totalSupply).toBe(50000);
+      expect(result.compute.active_jobs).toBe(20);
+      expect(result.ad.total_bids).toBe(150);
+    });
+  });
+
+  describe('error handling', () => {
+    it('should propagate network errors', async () => {
+      mockApiClient.post.mockRejectedValue(new Error('Network error'));
+
+      await expect(rpc.call('test.method')).rejects.toThrow('Network error');
+    });
+
+    it('should propagate timeout errors', async () => {
+      mockApiClient.post.mockRejectedValue(new Error('Request timeout'));
+
+      await expect(rpc.call('test.method')).rejects.toThrow('Request timeout');
+    });
+  });
+});

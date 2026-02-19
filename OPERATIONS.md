@@ -17,7 +17,9 @@ python -m http.server 4173
 ## Probes
 
 - `GET /health` (port 5000): uptime, SimpleDb health/flush lag, feature lag, recent error counts.
+- `health.bootstrap.genesis_ready` reflects whether the node RPC is reachable **and** reporting `block_height > 0`; the frontend uses this to decide between live vs. mock data. Expect `rpc_connected=true` when the node is up.
 - `GET /metrics` (port 5000): Prometheus text format emitted by `block_buster.utils.metrics`.
+- `POST /rpc` (port 5000): JSON-RPC 2.0 passthrough to the node. Accepts single or batch payloads and returns upstream results/errors untouched so the web UI can reuse the node method surface even when it is pointed at the dashboard host.
 - Dashboard latency sparkline reads `rpc_latency_ms` from `/health`; leave that field enabled so operators can see jitter without DevTools.
 
 Optional auth for metrics:

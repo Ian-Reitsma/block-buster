@@ -6,44 +6,57 @@
     <title>Block Buster Dashboard</title>
     <link rel="stylesheet" href="css/tailwind.min.css?v=20260205">
     <link rel="stylesheet" href="dashboard.css?v=20260205">
-    <script src="runtime-config.js?v=20260205"></script>
-    <script src="js/utils.js?v=20260205"></script>
+    <!-- Core dependencies (blocking) -->
+    <script src="runtime-config.js?v=20260212"></script>
+    <script src="js/utils.js?v=20260212"></script>
+    
+    <!-- Initialize API config and gate policy -->
     <script>
         const { apiBase, apiKey } = resolveApiConfig();
         window.API_BASE = apiBase;
         window.API_KEY = apiKey;
-        (async function redirectIfGated() {
-            const params = new URLSearchParams(window.location.search);
-            if (params.get('force') === '1' || params.get('nogate') === '1') return;
-            try {
-                const res = await fetch(`${apiBase}/theblock/gates`, { cache: 'no-store' });
-                if (!res.ok) return;
-                const gates = await res.json();
-                const gated = Array.isArray(gates) && gates.some(g => (g.state || '').toLowerCase() !== 'trade');
-                if (gated) {
-                    window.location.replace('network.html?gated=1&from=dashboard');
+        
+        // Use centralized gate policy (prefer banner over redirect for dashboard)
+        (async function checkGatePolicy() {
+            const gateStatus = await enforceGatePolicy({ 
+                page: 'dashboard', 
+                allowOverrideParams: true 
+            });
+            
+            // Show banner if gated (non-blocking)
+            if (gateStatus.gated && !sessionStorage.getItem('gateBannerDismissed')) {
+                // Wait for DOM to be ready
+                if (document.readyState === 'loading') {
+                    document.addEventListener('DOMContentLoaded', () => showGateBanner(gateStatus));
+                } else {
+                    showGateBanner(gateStatus);
                 }
-            } catch (_) {}
+            }
         })();
     </script>
-    <script src="js/shell.js?v=20260205"></script>
-    <script src="js/nav.js?v=20260205"></script>
-    <script src="js/walkthrough.js?v=20260205"></script>
-    <script src="js/vendor/chart.min.js?v=20260205"></script>
-    <script src="js/charting.js?v=20260205"></script>
-    <script src="js/portfolio.js?v=20260205"></script>
-    <script src="js/analytics.js?v=20260205"></script>
-    <script src="js/debug.js?v=20260205"></script>
+    
+    <!-- Shell and navigation (blocking for layout) -->
+    <script src="js/shell.js?v=20260212"></script>
+    <script src="js/nav.js?v=20260212"></script>
+    <script src="js/walkthrough.js?v=20260212" defer></script>
+    
+    <!-- Page-specific modules (deferred, loaded by boot.js) -->
+    <script src="js/boot.js?v=20260212" defer></script>
 </head>
 <body class="text-white font-display min-h-screen relative">
     <a href="#main-content" class="sr-only focus:not-sr-only focus:absolute focus:top-2 focus:left-4 bg-black text-white px-3 py-2 rounded">Skip to content</a>
-    <!-- Mode Modal -->
-    <div id="modeModal" class="fixed inset-0 bg-black/80 flex items-center justify-center z-50 hidden">
-        <div class="bg-panel-black p-6 rounded text-center space-y-4">
-            <p class="hologram-text">Select dashboard mode</p>
+    <!-- Mode Modal (a11y enhanced) -->
+    <div id="modeModal" class="fixed inset-0 bg-black/80 flex items-center justify-center z-50 hidden" role="dialog" aria-modal="true" aria-labelledby="modeModalTitle">
+        <div class="bg-panel-black p-6 rounded text-center space-y-4 relative" role="document">
+            <button id="modeModalClose" class="absolute top-2 right-2 text-gray-400 hover:text-white" aria-label="Close modal">
+                <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                    <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"/>
+                </svg>
+            </button>
+            <h2 id="modeModalTitle" class="hologram-text text-lg font-semibold">Select Dashboard Mode</h2>
             <div class="space-x-4">
-                <button id="modeBasic" class="px-4 py-2 bg-block-purple/20 text-block-purple rounded">Basic</button>
-                <button id="modeAdvanced" class="px-4 py-2 bg-block-purple/20 text-block-purple rounded">Advanced</button>
+                <button id="modeBasic" class="btn btn--secondary">Basic</button>
+                <button id="modeAdvanced" class="btn btn--primary">Advanced</button>
             </div>
         </div>
     </div>
@@ -52,23 +65,65 @@
 
     <!-- Main Content -->
     <main id="main-content" class="page-content">
-        <div class="flex items-center justify-between mb-3">
-            <div class="flex items-center gap-2 text-xs text-gray-300">
-                <span>Dashboard</span>
-                <span id="dashboard-stale" class="status-pill status-info">STALE</span>
-                <span id="gate-summary" class="micro-badge">gates —</span>
+        <!-- Compressed Health Header -->
+        <div class="flex items-center justify-between mb-4">
+            <!-- Left: Primary Status -->
+            <div class="flex items-center gap-3">
+                <h1 class="text-sm font-semibold text-gray-300 uppercase tracking-wide">Dashboard</h1>
+                <span id="system-health-pill" class="pill pill--good" data-status="live" title="Overall system status">LIVE</span>
+                <span id="gate-summary" class="badge" title="Market gate status">gates —</span>
             </div>
-            <div class="flex items-center gap-2 flex-wrap">
-                <span id="health-lag" class="micro-badge">feature lag —</span>
-                <span id="health-errors" class="micro-badge">errors —</span>
-                <span id="health-db" class="micro-badge">db wal —</span>
-                <span id="health-flush" class="micro-badge">flush —</span>
-                <span id="health-comp" class="micro-badge">comp —</span>
-                <span id="dashboard-updated" class="chip">Waiting for data</span>
+            
+            <!-- Right: Key Metrics + Disclosure -->
+            <div class="flex items-center gap-3">
+                <!-- Primary health indicators (errors + lag only) -->
+                <span id="health-errors-primary" class="chip" title="Recent error count">errors: —</span>
+                <span id="health-lag-primary" class="chip" title="Feature engine lag">lag: —</span>
+                
+                <!-- Progressive disclosure for full health breakdown -->
+                <details class="relative" id="health-details">
+                    <summary class="chip chip--accent cursor-pointer hover:bg-amber-500/20 transition-colors" title="Click for full health breakdown">
+                        <span>System Health</span>
+                        <svg class="w-3 h-3 inline-block ml-1 transition-transform" id="health-chevron" fill="currentColor" viewBox="0 0 20 20">
+                            <path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd"/>
+                        </svg>
+                    </summary>
+                    <div class="absolute right-0 top-full mt-2 w-64 panel panel--metric p-3 space-y-2 z-50 shadow-lg">
+                        <div class="text-xs font-semibold text-gray-400 uppercase border-b border-gray-700/50 pb-2 mb-2">Health Breakdown</div>
+                        <div class="grid grid-cols-2 gap-2 text-xs">
+                            <div class="flex justify-between">
+                                <span class="text-gray-500">Feature Lag:</span>
+                                <span id="health-lag" class="text-white font-mono">—</span>
+                            </div>
+                            <div class="flex justify-between">
+                                <span class="text-gray-500">Errors:</span>
+                                <span id="health-errors" class="text-white font-mono">—</span>
+                            </div>
+                            <div class="flex justify-between">
+                                <span class="text-gray-500">DB WAL:</span>
+                                <span id="health-db" class="text-white font-mono">—</span>
+                            </div>
+                            <div class="flex justify-between">
+                                <span class="text-gray-500">Flush:</span>
+                                <span id="health-flush" class="text-white font-mono">—</span>
+                            </div>
+                            <div class="flex justify-between col-span-2">
+                                <span class="text-gray-500">Compaction:</span>
+                                <span id="health-comp" class="text-white font-mono">—</span>
+                            </div>
+                        </div>
+                        <div class="border-t border-gray-700/50 pt-2 mt-2">
+                            <div class="flex justify-between text-xs">
+                                <span class="text-gray-500">Last Updated:</span>
+                                <span id="dashboard-updated" class="text-gray-400 font-mono">—</span>
+                            </div>
+                        </div>
+                    </div>
+                </details>
             </div>
         </div>
-        <!-- Hero Strip -->
-        <section class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-6" id="hero-strip">
+        <!-- Hero Strip: Core Chain Metrics -->
+        <section class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-4" id="hero-strip-chain">
             <div class="panel-blade p-4 flex items-center justify-between" data-panel="hero">
                 <div>
                     <div class="text-xs text-gray-400 uppercase">Uptime</div>
@@ -95,32 +150,52 @@
             </div>
             <div class="panel-blade p-4 flex items-center justify-between" data-panel="hero">
                 <div>
-                    <div class="text-xs text-gray-400 uppercase">Wallet</div>
-                    <div id="wallet-status" class="text-xl font-semibold text-white skeleton">Monitoring</div>
-                    <div id="wallet-note" class="text-xs text-gray-500 mt-1">Connect this node's funded wallet (or an external wallet) to activate trading.</div>
-                    <span class="chip mt-1 inline-block" id="wallet-updated">Waiting…</span>
+                    <div class="text-xs text-gray-400 uppercase">Market Gate</div>
+                    <div id="hero-market-gate" class="text-xl font-semibold text-white skeleton">Checking…</div>
+                    <span class="chip mt-1 inline-block" id="hero-market-gate-updated">Waiting…</span>
+                </div>
+                <span class="status-pill status-info" id="hero-market-gate-pill">—</span>
+            </div>
+        </section>
+        
+        <!-- Trading & Account Metrics -->
+        <section class="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6" id="hero-strip-trading">
+            <div class="panel-blade p-4 flex items-center justify-between" data-panel="hero">
+                <div class="flex-1">
+                    <div class="text-xs text-gray-400 uppercase">Wallet Connection</div>
+                    <div id="wallet-status" class="text-xl font-semibold text-white skeleton mt-1">Disconnected</div>
+                    <div class="flex items-center gap-2 mt-2">
+                        <span class="badge" id="wallet-eligibility" title="Trading eligibility">Eligibility: —</span>
+                        <span class="chip" id="wallet-updated">Waiting…</span>
+                    </div>
                 </div>
                 <span class="status-pill status-info" id="wallet-pill">CHECK</span>
             </div>
             <div class="panel-blade p-4 flex items-center justify-between" data-panel="hero">
                 <div>
-                    <div class="text-xs text-gray-400 uppercase">Market Gate</div>
-                    <div id="hero-market-gate" class="text-xl font-semibold text-white skeleton">Checking…</div>
-                    <div id="hero-market-gate-note" class="text-xs text-gray-400 mt-1">Awaiting status</div>
-                    <span class="chip mt-1 inline-block" id="hero-market-gate-updated">Waiting…</span>
-                </div>
-                <span class="status-pill status-info" id="hero-market-gate-pill">—</span>
-            </div>
-            <div class="panel-blade p-4 flex items-center justify-between" data-panel="hero">
-                <div>
                     <div class="text-xs text-gray-400 uppercase">Net P&L</div>
                     <div id="hero-net-pnl" class="text-xl font-semibold text-white skeleton">—</div>
-                    <div id="hero-net-pnl-change" class="text-xs text-blade-amber/70 mt-1">—</div>
-                    <span class="chip mt-1 inline-block" id="hero-net-pnl-updated">Waiting…</span>
+                    <div class="flex items-center gap-2 mt-2">
+                        <span id="hero-net-pnl-change" class="text-xs text-gray-400">—</span>
+                        <span class="chip" id="hero-net-pnl-updated">Waiting…</span>
+                    </div>
                 </div>
                 <span class="status-pill status-info" id="hero-net-pnl-pill">—</span>
             </div>
         </section>
+
+        <!-- Wallet Setup Guidance (conditional, hidden by default) -->
+        <div id="wallet-guidance" class="hidden mb-4 panel panel--glass p-4 border-amber-500/30">
+            <div class="flex items-start gap-3">
+                <svg class="w-5 h-5 text-amber-400 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+                    <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"/>
+                </svg>
+                <div class="flex-1">
+                    <p class="text-sm text-gray-300">To enable trading, connect a funded wallet (node wallet or external).</p>
+                    <button id="wallet-guidance-dismiss" class="text-xs text-amber-400 hover:text-amber-300 mt-1 underline">Dismiss</button>
+                </div>
+            </div>
+        </div>
 
         <section class="space-y-2 mb-6" id="portfolio-section">
             <div class="flex items-center justify-between">

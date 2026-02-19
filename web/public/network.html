@@ -2,91 +2,115 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Network Health · Block Buster</title>
-    <link rel="stylesheet" href="css/tailwind.min.css?v=20260205">
-    <link rel="stylesheet" href="dashboard.css?v=20260205">
-    <script src="runtime-config.js?v=20260205"></script>
-    <script src="js/utils.js?v=20260205"></script>
-    <script src="js/shell.js?v=20260205"></script>
-    <script src="js/nav.js?v=20260205"></script>
-    <script src="js/walkthrough.js?v=20260205"></script>
-    <script src="js/vendor/chart.min.js?v=20260205"></script>
-    <script src="js/network_health.js?v=20260205"></script>
+    <link rel="stylesheet" href="css/tailwind.min.css?v=20260212">
+    <link rel="stylesheet" href="dashboard.css?v=20260212">
+    
+    <!-- Core dependencies (blocking) -->
+    <script src="runtime-config.js?v=20260212"></script>
+    <script src="js/utils.js?v=20260212"></script>
+    
+    <!-- Shell and navigation (blocking for layout) -->
+    <script src="js/shell.js?v=20260212"></script>
+    <script src="js/nav.js?v=20260212"></script>
+    <script src="js/walkthrough.js?v=20260212" defer></script>
+    
+    <!-- Page-specific modules (deferred, loaded by boot.js) -->
+    <script src="js/boot.js?v=20260212" defer></script>
 </head>
 <body class="font-display min-h-screen">
     <a href="#main-content" class="sr-only">Skip to content</a>
-    <main id="main-content" class="page-content space-y-5">
+    <main id="main-content" class="page-content space-y-6">
+        <!-- Header -->
         <div class="section-header">
             <div class="section-meta">
-                <span class="text-xs text-gray-400">Operate</span>
+                <span class="text-xs text-gray-400">Network</span>
                 <span class="text-xs text-gray-500">/</span>
-                <span class="text-xs">Network Health</span>
-                <span id="nh-status" class="status-pill status-info">PENDING</span>
+                <span class="text-xs font-semibold">Health Dashboard</span>
+                <span id="nh-status" class="status-pill status-info">LIVE</span>
             </div>
             <div class="section-meta">
                 <span id="nh-updated" class="chip">Waiting…</span>
             </div>
         </div>
+
+        <!-- Gated Banner -->
         <div id="gated-banner" class="banner banner-warn hidden">
             Markets are gated — network health is primary until gates open.
             <a href="dashboard.html?force=1" class="underline">Open dashboard anyway</a>
         </div>
 
-        <section class="panel-blade hologram-panel space-y-4">
-            <div class="panel-header network-hero-header">
-                <div>
-                    <div class="panel-title">Network Overview</div>
-                    <div class="panel-subtitle">Live strength score, peers, latency, and gate readiness.</div>
+        <!-- Primary Metrics Grid -->
+        <section class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            <!-- Network Strength -->
+            <div class="panel-blade hologram-panel p-6">
+                <div class="flex items-start justify-between mb-3">
+                    <div class="flex-1">
+                        <div class="text-xs text-gray-400 uppercase tracking-wider mb-2">Network Strength</div>
+                        <div id="nh-strength" class="text-4xl font-bold amber-glow mb-1">—</div>
+                        <div class="text-xs text-gray-500" id="nh-strength-meta">composite health score</div>
+                    </div>
+                    <canvas id="nh-uptime-mini" width="80" height="40" class="opacity-60"></canvas>
                 </div>
-                <div class="panel-actions">
-                    <span class="micro-badge" id="nh-overview-source">/theblock/network —</span>
-                    <span class="chip chip-pill" id="nh-gate-latch">Gating evaluation</span>
-                </div>
-            </div>
-            <div class="hero-strip" id="nh-overview-strip">
-                <div class="kpi metric-card">
-                    <div class="kpi-label">Strength</div>
-                    <div id="nh-strength" class="kpi-value amber-glow">—</div>
-                    <div class="kpi-meta" id="nh-strength-meta">composite</div>
-                </div>
-                <div class="kpi metric-card">
-                    <div class="kpi-label">Peers / Validators</div>
-                    <div id="nh-peers" class="kpi-value cyan-glow">—</div>
-                    <div class="kpi-meta" id="nh-peers-meta">connected peers</div>
-                </div>
-                <div class="kpi metric-card">
-                    <div class="kpi-label">Latency</div>
-                    <div id="nh-latency" class="kpi-value">—</div>
-                    <div class="kpi-meta" id="nh-latency-meta">rpc + finality</div>
+                <div class="mt-4 pt-3 border-t border-gray-700/30">
+                    <span class="micro-badge" id="nh-overview-source">/theblock/network</span>
                 </div>
             </div>
-            <div class="gate-readiness-grid" id="nh-gate-readiness">
-                <article class="gate-readiness-card">
-                    <div class="gate-label">Open gates</div>
-                    <div class="gate-value" id="nh-gate-open-count">—</div>
-                    <div class="gate-note" id="nh-gate-summary-text">Awaiting governor data…</div>
-                </article>
-                <article class="gate-readiness-card">
-                    <div class="gate-label">Average coverage</div>
-                    <div class="gate-value" id="nh-gate-coverage">0%</div>
-                    <div class="gate-note" id="nh-gate-coverage-note">Peers online vs gate requirement</div>
-                </article>
-                <article class="gate-readiness-card">
-                    <div class="gate-label">Gap needed</div>
-                    <div class="gate-value" id="nh-gate-nodes-needed">—</div>
-                    <div class="gate-note" id="nh-gate-nodes-note">Remaining streaks or nodes to unlock markets</div>
-                </article>
+
+            <!-- Peers & Validators -->
+            <div class="panel-blade hologram-panel p-6">
+                <div class="flex items-start justify-between mb-3">
+                    <div class="flex-1">
+                        <div class="text-xs text-gray-400 uppercase tracking-wider mb-2">Active Peers</div>
+                        <div id="nh-peers" class="text-4xl font-bold cyan-glow mb-1">—</div>
+                        <div class="text-xs text-gray-500" id="nh-peers-meta">connected validators</div>
+                    </div>
+                    <div class="text-right">
+                        <div class="text-xs text-gray-400 mb-1">Latency</div>
+                        <div id="nh-latency" class="text-lg font-semibold text-white">—</div>
+                    </div>
+                </div>
+                <div class="mt-4 pt-3 border-t border-gray-700/30">
+                    <div class="text-xs text-gray-500" id="nh-latency-meta">avg rpc response time</div>
+                </div>
+            </div>
+
+            <!-- Gate Status Summary -->
+            <div class="panel-blade hologram-panel p-6 md:col-span-2 lg:col-span-1">
+                <div class="mb-3">
+                    <div class="text-xs text-gray-400 uppercase tracking-wider mb-2">Market Gates</div>
+                    <div class="flex items-baseline gap-2 mb-1">
+                        <span id="nh-gate-open-count" class="text-4xl font-bold text-white">—</span>
+                        <span class="text-xl text-gray-500">markets</span>
+                    </div>
+                    <div class="text-xs text-gray-500 mb-3" id="nh-gate-summary-text">Awaiting governor data…</div>
+                </div>
+                <div class="flex items-center gap-3">
+                    <div class="flex-1">
+                        <div class="text-xs text-gray-500 mb-1">Coverage</div>
+                        <div id="nh-gate-coverage" class="text-lg font-semibold text-white">—</div>
+                    </div>
+                    <div class="flex-1">
+                        <div class="text-xs text-gray-500 mb-1">Gap Needed</div>
+                        <div id="nh-gate-nodes-needed" class="text-lg font-semibold text-white">—</div>
+                    </div>
+                    <div>
+                        <span class="chip chip-pill" id="nh-gate-latch">Checking</span>
+                    </div>
+                </div>
             </div>
         </section>
 
+        <!-- Governor Gates Detail -->
         <section class="panel-blade hologram-panel space-y-4">
             <div class="panel-header">
                 <div>
-                    <div class="panel-title">Governor Gates</div>
-                    <div class="panel-subtitle">Per-market readiness with estimated node coverage.</div>
+                    <div class="panel-title">Market Gate Status</div>
+                    <div class="panel-subtitle">Per-market readiness with streak requirements and node coverage</div>
                 </div>
                 <div class="panel-actions">
-                    <button id="nh-gates-retry" class="micro-badge">Refresh</button>
+                    <button id="nh-gates-retry" class="micro-badge hover:bg-block-purple/20 transition-colors">Refresh</button>
                 </div>
             </div>
             <div id="nh-gates-grid" class="gate-grid">
@@ -94,218 +118,286 @@
             </div>
         </section>
 
-        <section class="hero-strip" id="nh-hero">
-            <div class="kpi">
-                <div class="kpi-label">RPC Latency</div>
-                <div id="nh-rpc-latency" class="kpi-value">—</div>
-                <div class="kpi-meta" id="nh-rpc-latency-meta">n/a</div>
+        <!-- Health Metrics (Grouped by Category) -->
+        <section class="space-y-4">
+            <!-- Latency Metrics -->
+            <div>
+                <h3 class="text-xs font-semibold uppercase tracking-wider text-gray-500 mb-3 px-1">Latency</h3>
+                <div class="grid grid-cols-2 md:grid-cols-3 gap-3">
+                    <div class="kpi metric-card">
+                        <div class="kpi-label">RPC Latency</div>
+                        <div id="nh-rpc-latency" class="kpi-value">—</div>
+                        <div class="kpi-meta">ms</div>
+                    </div>
+                    <div class="kpi metric-card">
+                        <div class="kpi-label">Feature Lag</div>
+                        <div id="nh-feature-lag" class="kpi-value">—</div>
+                        <div class="kpi-meta">ms</div>
+                    </div>
+                    <div class="kpi metric-card">
+                        <div class="kpi-label">WAL Lag</div>
+                        <div id="nh-wal-lag" class="kpi-value">—</div>
+                        <div class="kpi-meta">ms</div>
+                    </div>
+                </div>
             </div>
-            <div class="kpi">
-                <div class="kpi-label">Feature Lag</div>
-                <div id="nh-feature-lag" class="kpi-value">—</div>
-                <div class="kpi-meta" id="nh-feature-meta">n/a</div>
+            
+            <!-- Storage Metrics -->
+            <div>
+                <h3 class="text-xs font-semibold uppercase tracking-wider text-gray-500 mb-3 px-1">Storage</h3>
+                <div class="grid grid-cols-2 md:grid-cols-3 gap-3">
+                    <div class="kpi metric-card">
+                        <div class="kpi-label">Memtables</div>
+                        <div id="nh-memtables" class="kpi-value">—</div>
+                        <div class="kpi-meta">active</div>
+                    </div>
+                    <div class="kpi metric-card">
+                        <div class="kpi-label">SST Files</div>
+                        <div id="nh-sst" class="kpi-value">—</div>
+                        <div class="kpi-meta">count</div>
+                    </div>
+                    <div class="kpi metric-card">
+                        <div class="kpi-label">Disk Used</div>
+                        <div id="nh-disk" class="kpi-value">—</div>
+                        <div class="kpi-meta">MB</div>
+                    </div>
+                </div>
             </div>
-            <div class="kpi">
-                <div class="kpi-label">WAL Lag</div>
-                <div id="nh-wal-lag" class="kpi-value">—</div>
-                <div class="kpi-meta" id="nh-wal-meta">n/a</div>
-            </div>
-            <div class="kpi">
-                <div class="kpi-label">Recent Errors</div>
-                <div id="nh-errors" class="kpi-value">—</div>
-                <div class="kpi-meta" id="nh-errors-meta">n/a</div>
-            </div>
-            <div class="kpi">
-                <div class="kpi-label">Memtables</div>
-                <div id="nh-memtables" class="kpi-value">—</div>
-                <div class="kpi-meta" id="nh-memtables-meta">tables</div>
-            </div>
-            <div class="kpi">
-                <div class="kpi-label">SST Files</div>
-                <div id="nh-sst" class="kpi-value">—</div>
-                <div class="kpi-meta" id="nh-sst-meta">files</div>
-            </div>
-            <div class="kpi">
-                <div class="kpi-label">Disk Used</div>
-                <div id="nh-disk" class="kpi-value">—</div>
-                <div class="kpi-meta" id="nh-disk-meta">n/a</div>
+            
+            <!-- Error Metrics -->
+            <div>
+                <h3 class="text-xs font-semibold uppercase tracking-wider text-gray-500 mb-3 px-1">Errors</h3>
+                <div class="grid grid-cols-2 md:grid-cols-3 gap-3">
+                    <div class="kpi metric-card">
+                        <div class="kpi-label">Recent Errors</div>
+                        <div id="nh-errors" class="kpi-value">—</div>
+                        <div class="kpi-meta">count</div>
+                    </div>
+                </div>
             </div>
         </section>
 
-        <section class="panel-blade hologram-panel space-y-4">
-            <div class="panel-header">
-                <div>
-                    <div class="panel-title">Consensus & Finality</div>
-                    <div class="panel-subtitle">Block vs finalized height and gap over time with SLA thresholds.</div>
-                </div>
-                <div class="panel-actions">
-                    <span class="micro-badge" id="nh-finality-chip">/theblock/network —</span>
-                    <span class="micro-badge" id="nh-gap-chip">gap —</span>
-                </div>
-            </div>
-            <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
-                <div class="kpi metric-card">
-                    <div class="kpi-label">Finality Gap</div>
-                    <div id="nh-finality-gap" class="kpi-value amber-glow">—</div>
-                    <div class="kpi-meta" id="nh-finality-gap-meta">blocks</div>
-                </div>
-                <div class="kpi metric-card">
-                    <div class="kpi-label">Block Height</div>
-                    <div id="nh-block-height" class="kpi-value">—</div>
-                    <div class="kpi-meta" id="nh-block-height-meta">head / finalized</div>
-                </div>
-                <div class="kpi metric-card">
-                    <div class="kpi-label">Finality Time</div>
-                    <div id="nh-finality-time" class="kpi-value">—</div>
-                    <div class="kpi-meta" id="nh-finality-time-meta">blocks until final</div>
-                </div>
-            </div>
-            <canvas id="nh-finality-chart" height="180"></canvas>
-        </section>
+        <!-- Charts Grid: Two Column Layout -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            
+            <!-- Left Column -->
+            <div class="space-y-6">
+                <!-- Consensus & Finality -->
+                <section class="panel-blade hologram-panel space-y-4">
+                    <div class="panel-header">
+                        <div>
+                            <div class="panel-title">Consensus & Finality</div>
+                            <div class="panel-subtitle">Block height progression and finalization gap</div>
+                        </div>
+                        <div class="panel-actions">
+                            <span class="micro-badge" id="nh-finality-chip">gap —</span>
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-3 gap-3 mb-3">
+                        <div class="kpi metric-card">
+                            <div class="kpi-label">Finality Gap</div>
+                            <div id="nh-finality-gap" class="kpi-value amber-glow">—</div>
+                            <div class="kpi-meta" id="nh-finality-gap-meta">blocks</div>
+                        </div>
+                        <div class="kpi metric-card">
+                            <div class="kpi-label">Block Height</div>
+                            <div id="nh-block-height" class="kpi-value">—</div>
+                            <div class="kpi-meta" id="nh-block-height-meta">current</div>
+                        </div>
+                        <div class="kpi metric-card">
+                            <div class="kpi-label">Finality Time</div>
+                            <div id="nh-finality-time" class="kpi-value">—</div>
+                            <div class="kpi-meta" id="nh-finality-time-meta">blocks</div>
+                        </div>
+                    </div>
+                    <canvas id="nh-finality-chart" height="160"></canvas>
+                </section>
 
-        <section class="panel-blade hologram-panel space-y-4">
-            <div class="panel-header">
-                <div>
-                    <div class="panel-title">Throughput & Latency</div>
-                    <div class="panel-subtitle">TPS vs block time with p50/p95 bands and SLA lines.</div>
-                </div>
-                <div class="panel-actions">
-                    <span class="micro-badge" id="nh-throughput-chip">/theblock/network —</span>
-                    <span class="micro-badge" id="nh-blocktime-chip">avg block time —</span>
-                </div>
-            </div>
-            <canvas id="nh-throughput-chart" height="160"></canvas>
-        </section>
+                <!-- Peer Stability -->
+                <section class="panel-blade hologram-panel space-y-4">
+                    <div class="panel-header">
+                        <div>
+                            <div class="panel-title">Peer Stability</div>
+                            <div class="panel-subtitle">Connected peers and network strength over time</div>
+                        </div>
+                        <div class="panel-actions">
+                            <span class="micro-badge" id="nh-peers-chip">tracking —</span>
+                        </div>
+                    </div>
+                    <canvas id="nh-peer-chart" height="140"></canvas>
+                </section>
 
-        <section class="panel-blade hologram-panel space-y-4">
-            <div class="panel-header">
-                <div>
-                    <div class="panel-title">Peer Stability</div>
-                    <div class="panel-subtitle">Peer count vs strength with SLA thresholds.</div>
-                </div>
-                <div class="panel-actions">
-                    <span class="micro-badge" id="nh-peers-chip">peers —</span>
-                </div>
+                <!-- Storage Health -->
+                <section class="panel-blade hologram-panel space-y-4">
+                    <div class="panel-header">
+                        <div>
+                            <div class="panel-title">Storage Health</div>
+                            <div class="panel-subtitle">Memtables and SST file growth</div>
+                        </div>
+                        <div class="panel-actions">
+                            <span class="micro-badge" id="nh-storage-chip">simpledb —</span>
+                        </div>
+                    </div>
+                    <canvas id="nh-storage-chart" height="140"></canvas>
+                </section>
             </div>
-            <canvas id="nh-peer-chart" height="140"></canvas>
-        </section>
 
+            <!-- Right Column -->
+            <div class="space-y-6">
+                <!-- Throughput & Latency -->
+                <section class="panel-blade hologram-panel space-y-4">
+                    <div class="panel-header">
+                        <div>
+                            <div class="panel-title">Throughput & Block Time</div>
+                            <div class="panel-subtitle">TPS with p50/p95 latency bands</div>
+                        </div>
+                        <div class="panel-actions">
+                            <span class="micro-badge" id="nh-throughput-chip">tps —</span>
+                            <span class="micro-badge" id="nh-blocktime-chip">block time —</span>
+                        </div>
+                    </div>
+                    <canvas id="nh-throughput-chart" height="160"></canvas>
+                </section>
+
+                <!-- Response Time & Errors -->
+                <section class="panel-blade hologram-panel space-y-4">
+                    <div class="panel-header">
+                        <div>
+                            <div class="panel-title">Response Time</div>
+                            <div class="panel-subtitle">RPC and WAL latency tracking</div>
+                        </div>
+                        <div class="panel-actions">
+                            <span class="micro-badge" id="nh-legend-rpc">RPC —</span>
+                            <span class="micro-badge" id="nh-legend-wal">WAL —</span>
+                        </div>
+                    </div>
+                    <canvas id="nh-latency-chart" height="140"></canvas>
+                </section>
+
+                <!-- Error Rate -->
+                <section class="panel-blade hologram-panel space-y-4">
+                    <div class="panel-header">
+                        <div>
+                            <div class="panel-title">Error Rate</div>
+                            <div class="panel-subtitle">Recent error count trending</div>
+                        </div>
+                        <div class="panel-actions">
+                            <span class="micro-badge" id="nh-error-chip">errors —</span>
+                        </div>
+                    </div>
+                    <canvas id="nh-error-chart" height="140"></canvas>
+                </section>
+            </div>
+        </div>
+
+        <!-- Reliability Signals -->
         <section class="panel-blade hologram-panel space-y-4">
             <div class="panel-header">
                 <div>
                     <div class="panel-title">Reliability Signals</div>
-                    <div class="panel-subtitle">Rolling uptime and RPC failure rate from /metrics.</div>
+                    <div class="panel-subtitle">Rolling uptime and RPC failure rate from /metrics</div>
                 </div>
                 <div class="panel-actions">
-                    <button id="nh-metrics-refresh" class="micro-badge">Refresh</button>
+                    <button id="nh-metrics-refresh" class="micro-badge hover:bg-block-purple/20 transition-colors">Refresh</button>
                 </div>
             </div>
             <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
-                    <div class="panel-subtitle text-gray-300">Uptime (hrs, rolling)</div>
-                    <canvas id="nh-uptime-mini" height="90"></canvas>
+                    <div class="flex items-center justify-between mb-2">
+                        <span class="text-xs text-gray-400 uppercase">Uptime Percentage</span>
+                        <span id="nh-uptime-pct" class="text-sm font-semibold text-white">—</span>
+                    </div>
+                    <canvas id="nh-uptime-chart" height="100"></canvas>
                 </div>
                 <div>
-                    <div class="panel-subtitle text-gray-300">RPC Failures (per min)</div>
-                    <canvas id="nh-rpcfail-mini" height="90"></canvas>
+                    <div class="flex items-center justify-between mb-2">
+                        <span class="text-xs text-gray-400 uppercase">RPC Failures</span>
+                        <span id="nh-rpc-failures" class="text-sm font-semibold text-white">—</span>
+                    </div>
+                    <canvas id="nh-rpcfail-chart" height="100"></canvas>
                 </div>
             </div>
         </section>
 
-        <section class="panel-blade space-y-4">
-            <div class="panel-header">
-                <div>
-                    <div class="panel-title">Latency & WAL Lag</div>
-                    <div class="panel-subtitle">RPC vs SimpleDb WAL flush.</div>
+        <!-- Compaction & Disk I/O -->
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <section class="panel-blade hologram-panel space-y-4">
+                <div class="panel-header">
+                    <div>
+                        <div class="panel-title">Compaction Queue</div>
+                        <div class="panel-subtitle">Pending compaction operations</div>
+                    </div>
+                    <div class="panel-actions">
+                        <span class="micro-badge" id="nh-comp-chip">queue —</span>
+                    </div>
                 </div>
-                <div class="panel-actions">
-                    <span class="micro-badge" id="nh-health-chip">/health —</span>
-                    <button id="nh-retry" class="micro-badge">Retry</button>
-                </div>
-            </div>
-            <div class="flex gap-2 flex-wrap text-xs text-gray-400">
-                <span class="micro-badge" id="nh-legend-rpc">RPC —</span>
-                <span class="micro-badge" id="nh-legend-wal">WAL —</span>
-            </div>
-            <canvas id="nh-latency-chart" height="180"></canvas>
-        </section>
+                <canvas id="nh-compaction-chart" height="120"></canvas>
+            </section>
 
-        <section class="panel-blade space-y-4">
-            <div class="panel-header">
-                <div>
-                    <div class="panel-title">Storage Pressure</div>
-                    <div class="panel-subtitle">Stacked area for memtables + SST count.</div>
+            <section class="panel-blade hologram-panel space-y-4">
+                <div class="panel-header">
+                    <div>
+                        <div class="panel-title">Disk I/O</div>
+                        <div class="panel-subtitle">Storage throughput and usage</div>
+                    </div>
+                    <div class="panel-actions">
+                        <span class="micro-badge" id="nh-disk-chip">disk ops —</span>
+                    </div>
                 </div>
-            </div>
-            <canvas id="nh-storage-chart" height="200"></canvas>
-        </section>
+                <canvas id="nh-disk-chart" height="120"></canvas>
+            </section>
+        </div>
 
-        <section class="panel-blade space-y-4">
+        <!-- Debug Controls -->
+        <section class="panel-blade hologram-panel">
             <div class="panel-header">
                 <div>
-                    <div class="panel-title">Compaction Backlog</div>
-                    <div class="panel-subtitle">Queue depth over time.</div>
+                    <div class="panel-title">Monitoring Controls</div>
+                    <div class="panel-subtitle">Pause updates or toggle smoothing</div>
                 </div>
-            </div>
-            <canvas id="nh-compaction-chart" height="160"></canvas>
-        </section>
-
-        <section class="panel-blade space-y-4">
-            <div class="panel-header">
-                <div>
-                    <div class="panel-title">Recent Errors</div>
-                    <div class="panel-subtitle">Totals and last 60s window.</div>
+                <div class="panel-actions space-x-2">
+                    <button id="nh-toggle-pause" class="px-3 py-1 text-xs bg-block-purple/20 text-block-purple rounded hover:bg-block-purple/30 transition-colors">Pause</button>
+                    <button id="nh-toggle-smooth" class="px-3 py-1 text-xs bg-gray-700/30 text-gray-300 rounded hover:bg-gray-700/50 transition-colors">Smooth Off</button>
+                    <button id="nh-clear-history" class="px-3 py-1 text-xs bg-red-500/20 text-red-400 rounded hover:bg-red-500/30 transition-colors">Clear History</button>
                 </div>
-            </div>
-            <canvas id="nh-error-chart" height="140"></canvas>
-        </section>
-
-        <section class="panel-blade space-y-3">
-            <div class="panel-header">
-                <div>
-                    <div class="panel-title">SimpleDb Detail</div>
-                    <div class="panel-subtitle">Latest raw metrics (advanced).</div>
-                </div>
-            </div>
-            <div class="table-responsive">
-                <table class="table">
-                    <thead><tr><th>Metric</th><th>Value</th></tr></thead>
-                    <tbody id="nh-db-table">
-                        <tr><td colspan="2" class="text-center text-gray-500 py-2">Waiting…</td></tr>
-                    </tbody>
-                </table>
             </div>
         </section>
 
-        <section class="panel-blade space-y-3">
-            <div class="panel-header">
-                <div>
-                    <div class="panel-title">Controls</div>
-                    <div class="panel-subtitle">Sampling + smoothing.</div>
-                </div>
-                <div class="panel-actions">
-                    <button id="nh-pause" class="micro-badge">Pause</button>
-                    <button id="nh-resume" class="micro-badge">Resume</button>
-                    <label class="flex items-center gap-2 text-xs"><input type="checkbox" id="nh-smooth" /> Smooth (3-pt)</label>
-                </div>
-            </div>
-            <div class="text-xs text-gray-400">Sampling interval: 5s. Charts store last 50 samples.</div>
-        </section>
-
-        <section class="panel-blade space-y-3">
-            <div class="panel-header">
-                <div>
-                    <div class="panel-title">Metrics Scrape</div>
-                    <div class="panel-subtitle">/metrics text endpoint status</div>
-                </div>
-                <div class="panel-actions">
-                    <span class="micro-badge" id="nh-metrics-chip">/metrics —</span>
-                    <button id="nh-metrics-retry" class="micro-badge">Test</button>
-                </div>
-            </div>
-            <div class="text-xs text-gray-400" id="nh-metrics-stamp">Waiting…</div>
-        </section>
     </main>
-    <script src="js/footer.js?v=20260205"></script>
+
+    <script>
+        // Enhanced UI interactions
+        document.addEventListener('DOMContentLoaded', () => {
+            const pauseBtn = document.getElementById('nh-toggle-pause');
+            const smoothBtn = document.getElementById('nh-toggle-smooth');
+            const clearBtn = document.getElementById('nh-clear-history');
+
+            if (pauseBtn) {
+                pauseBtn.addEventListener('click', () => {
+                    window.networkHealthPaused = !window.networkHealthPaused;
+                    pauseBtn.textContent = window.networkHealthPaused ? 'Resume' : 'Pause';
+                    pauseBtn.classList.toggle('bg-green-500/20');
+                    pauseBtn.classList.toggle('text-green-400');
+                });
+            }
+
+            if (smoothBtn) {
+                smoothBtn.addEventListener('click', () => {
+                    window.networkHealthSmooth = !window.networkHealthSmooth;
+                    smoothBtn.textContent = window.networkHealthSmooth ? 'Smooth On' : 'Smooth Off';
+                    smoothBtn.classList.toggle('bg-block-purple/20');
+                    smoothBtn.classList.toggle('text-block-purple');
+                });
+            }
+
+            if (clearBtn) {
+                clearBtn.addEventListener('click', () => {
+                    if (confirm('Clear all chart history?')) {
+                        window.location.reload();
+                    }
+                });
+            }
+        });
+    </script>
 </body>
 </html>

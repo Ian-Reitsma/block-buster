@@ -1,0 +1,248 @@
+/**
+ * Economics Page Styles
+ * Progressive disclosure patterns with accessibility and motion preferences
+ */
+
+/* Metric Pulse Animation (respects prefers-reduced-motion) */
+@media (prefers-reduced-motion: no-preference) {
+  .metric-pulse {
+    animation: pulse-glow 2s ease-in-out infinite;
+  }
+  
+  @keyframes pulse-glow {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.7; }
+  }
+}
+
+/* Gate Progress Bar */
+.gate-progress-bar {
+  transition: width 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gate-progress-bar {
+    transition: none;
+  }
+}
+
+/* Gate Threshold Line */
+.gate-threshold-line {
+  position: absolute;
+  left: 80%;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: linear-gradient(to bottom, transparent, rgba(251, 191, 36, 0.5), transparent);
+}
+
+/* Simulator Slider (Custom Thumb) */
+.simulator-slider::-webkit-slider-thumb {
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #fbbf24, #f59e0b);
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(251, 191, 36, 0.4);
+  transition: transform 0.2s;
+}
+
+.simulator-slider::-webkit-slider-thumb:hover {
+  transform: scale(1.2);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .simulator-slider::-webkit-slider-thumb {
+    transition: none;
+  }
+  
+  .simulator-slider::-webkit-slider-thumb:hover {
+    transform: none;
+  }
+}
+
+.simulator-slider::-moz-range-thumb {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #fbbf24, #f59e0b);
+  cursor: pointer;
+  border: none;
+  box-shadow: 0 2px 8px rgba(251, 191, 36, 0.4);
+}
+
+/* Accessible Tooltip (Button-Triggered Popover) */
+.tooltip-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1rem;
+  height: 1rem;
+  border-radius: 50%;
+  background: rgba(156, 163, 175, 0.2);
+  color: rgb(156, 163, 175);
+  font-size: 0.75rem;
+  cursor: help;
+  border: 1px solid rgba(156, 163, 175, 0.3);
+  transition: background 0.2s;
+}
+
+.tooltip-trigger:hover,
+.tooltip-trigger:focus {
+  background: rgba(251, 191, 36, 0.2);
+  border-color: rgba(251, 191, 36, 0.5);
+  outline: 2px solid rgba(251, 191, 36, 0.3);
+  outline-offset: 2px;
+}
+
+.tooltip-content {
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 8px 12px;
+  background: rgba(17, 24, 39, 0.95);
+  color: #fff;
+  font-size: 0.75rem;
+  border-radius: 6px;
+  white-space: nowrap;
+  margin-bottom: 8px;
+  border: 1px solid rgba(251, 191, 36, 0.3);
+  z-index: 50;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+
+.tooltip-trigger[aria-expanded="true"] + .tooltip-content,
+.tooltip-trigger:hover + .tooltip-content,
+.tooltip-trigger:focus + .tooltip-content {
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tooltip-content {
+    transition: none;
+  }
+}
+
+/* Skeleton Loading */
+.skeleton {
+  background: linear-gradient(90deg, rgba(55, 65, 81, 0.3) 25%, rgba(75, 85, 99, 0.3) 50%, rgba(55, 65, 81, 0.3) 75%);
+  background-size: 200% 100%;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .skeleton {
+    animation: skeleton-loading 1.5s ease-in-out infinite;
+  }
+  
+  @keyframes skeleton-loading {
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+  }
+}
+
+/* Market Card Hover */
+.market-card-hover {
+  transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.market-card-hover:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(168, 85, 247, 0.2);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .market-card-hover {
+    transition: none;
+  }
+  
+  .market-card-hover:hover {
+    transform: none;
+  }
+}
+
+/* Market Status Pills */
+.status-rehearsal {
+  background: rgba(234, 179, 8, 0.2);
+  color: #eab308;
+}
+
+.status-trade {
+  background: rgba(74, 222, 128, 0.2);
+  color: #4ade80;
+}
+
+.status-gated {
+  background: rgba(156, 163, 175, 0.2);
+  color: #9ca3af;
+}
+
+/* Readiness Colors */
+.readiness-critical { color: #f87171; }
+.readiness-warning { color: #fbbf24; }
+.readiness-good { color: #4ade80; }
+.readiness-excellent { color: #22d3ee; }
+
+/* Disclosure Details (Progressive Disclosure Pattern) */
+.disclosure {
+  position: relative;
+}
+
+.disclosure__trigger {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+  list-style: none;
+  padding: 0.5rem;
+  border-radius: 0.375rem;
+  transition: background 0.2s;
+}
+
+.disclosure__trigger:hover,
+.disclosure__trigger:focus {
+  background: rgba(168, 85, 247, 0.1);
+  outline: 2px solid rgba(168, 85, 247, 0.3);
+  outline-offset: 2px;
+}
+
+.disclosure__trigger::marker,
+.disclosure__trigger::-webkit-details-marker {
+  display: none;
+}
+
+.disclosure__icon {
+  display: inline-block;
+  width: 1rem;
+  height: 1rem;
+  transition: transform 0.2s;
+}
+
+details[open] .disclosure__icon {
+  transform: rotate(90deg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .disclosure__trigger {
+    transition: none;
+  }
+  
+  .disclosure__icon {
+    transition: none;
+  }
+  
+  details[open] .disclosure__icon {
+    transform: none;
+  }
+}
+
+.disclosure__content {
+  padding: 1rem;
+  margin-top: 0.5rem;
+  background: rgba(31, 41, 55, 0.5);
+  border-radius: 0.375rem;
+  border: 1px solid rgba(75, 85, 99, 0.3);
+}

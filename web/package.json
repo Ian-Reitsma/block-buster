@@ -5,10 +5,30 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "dev": "python -m http.server 4173",
-    "build": "echo \"Static build: open index.html or serve via any HTTP server.\"",
-    "test": "node -e \"console.log('No third-party tests; see /tests for stdlib')\""
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test": "vitest",
+    "test:ui": "vitest --ui",
+    "test:coverage": "vitest --coverage",
+    "validate": "node validate-architecture.js",
+    "lint": "eslint src/**/*.js",
+    "format": "prettier --write 'src/**/*.{js,css}' 'index.html'",
+    "tailwind:watch": "tailwindcss -i public/css/block-buster.css -o public/css/tailwind.built.css --watch",
+    "check": "npm run validate && npm run lint && npm run test"
   },
-  "dependencies": {},
-  "devDependencies": {}
+  "devDependencies": {
+    "@eslint/js": "^9.17.0",
+    "@vitest/coverage-v8": "^4.0.18",
+    "@vitest/ui": "^4.0.18",
+    "autoprefixer": "^10.4.20",
+    "eslint": "^9.17.0",
+    "globals": "^15.13.0",
+    "happy-dom": "^20.6.1",
+    "postcss": "^8.4.49",
+    "prettier": "^3.4.2",
+    "tailwindcss": "^3.4.17",
+    "vite": "^6.0.5",
+    "vitest": "^4.0.18"
+  }
 }

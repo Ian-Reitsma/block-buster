@@ -759,3 +759,328 @@ main.page-content {
   .table { display: none; }
   .mobile-card { display: block; }
 }
+
+/* ========================================
+   Network Health Optimized Layout Styles
+   ======================================== */
+
+/* Primary metric cards with enhanced hierarchy */
+.panel-blade.hologram-panel {
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.panel-blade.hologram-panel:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 0 20px rgba(255, 140, 0, 0.3), inset 0 0 10px rgba(255, 140, 0, 0.05);
+}
+
+/* Enhanced KPI value displays */
+.kpi-value {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+  transition: color 0.3s ease;
+}
+
+/* Gate grid responsive improvements */
+.gate-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 1rem;
+}
+
+@media (min-width: 1024px) {
+  .gate-grid {
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  }
+}
+
+.gate-card {
+  padding: 1.25rem;
+  transition: all 0.2s ease;
+}
+
+.gate-card:hover {
+  transform: translateY(-1px);
+}
+
+/* Metric card enhancements */
+.metric-card {
+  background: rgba(12, 18, 28, 0.6);
+  border: 1px solid rgba(118, 134, 168, 0.25);
+  border-radius: 12px;
+  padding: 1rem;
+  transition: all 0.2s ease;
+}
+
+.metric-card:hover {
+  background: rgba(12, 18, 28, 0.8);
+  border-color: rgba(124, 198, 255, 0.4);
+}
+
+/* Chart container improvements */
+canvas {
+  max-width: 100%;
+  height: auto !important;
+}
+
+/* Panel header improvements */
+.panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+  padding: 0 0 1rem 0;
+  border-bottom: 1px solid rgba(118, 134, 168, 0.2);
+  margin-bottom: 1rem;
+}
+
+.panel-title {
+  font-size: 1.125rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 0.25rem;
+}
+
+.panel-subtitle {
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+.panel-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+/* Responsive grid improvements */
+@media (max-width: 768px) {
+  .panel-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  
+  .panel-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+}
+
+/* Chip and badge enhancements */
+.chip {
+  display: inline-block;
+  padding: 0.25rem 0.75rem;
+  font-size: 0.75rem;
+  font-weight: 500;
+  border-radius: 12px;
+  background: rgba(124, 198, 255, 0.12);
+  color: var(--accent-primary);
+  font-family: var(--font-mono);
+}
+
+.chip-pill {
+  border-radius: 16px;
+  padding: 0.375rem 1rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.025em;
+  font-size: 0.6875rem;
+}
+
+.chip-pill.live {
+  background: rgba(63, 216, 173, 0.2);
+  color: var(--ok);
+}
+
+.chip-pill.alert {
+  background: rgba(240, 165, 0, 0.2);
+  color: var(--warn);
+}
+
+.micro-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.25rem 0.625rem;
+  font-size: 0.6875rem;
+  font-family: var(--font-mono);
+  color: var(--text-dim);
+  background: rgba(118, 134, 168, 0.1);
+  border-radius: 8px;
+  border: 1px solid rgba(118, 134, 168, 0.2);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.micro-badge:hover {
+  background: rgba(118, 134, 168, 0.2);
+  border-color: rgba(124, 198, 255, 0.4);
+  color: var(--text-muted);
+}
+
+/* Status pills */
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.25rem 0.75rem;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  border-radius: 12px;
+  font-family: var(--font-display);
+}
+
+.status-good {
+  background: rgba(63, 216, 173, 0.2);
+  color: var(--ok);
+  border: 1px solid rgba(63, 216, 173, 0.3);
+}
+
+.status-warn {
+  background: rgba(240, 165, 0, 0.2);
+  color: var(--warn);
+  border: 1px solid rgba(240, 165, 0, 0.3);
+}
+
+.status-bad {
+  background: rgba(239, 91, 107, 0.2);
+  color: var(--bad);
+  border: 1px solid rgba(239, 91, 107, 0.3);
+}
+
+.status-info {
+  background: rgba(92, 169, 255, 0.2);
+  color: var(--info);
+  border: 1px solid rgba(92, 169, 255, 0.3);
+}
+
+/* Gate specific styles */
+.gate-chip {
+  display: inline-block;
+  padding: 0.25rem 0.75rem;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  border-radius: 10px;
+  letter-spacing: 0.05em;
+}
+
+.gate-chip.trade {
+  background: rgba(63, 216, 173, 0.25);
+  color: var(--ok);
+  border: 1px solid rgba(63, 216, 173, 0.4);
+}
+
+.gate-chip.observe {
+  background: rgba(240, 165, 0, 0.25);
+  color: var(--warn);
+  border: 1px solid rgba(240, 165, 0, 0.4);
+}
+
+.gate-chip.closed {
+  background: rgba(239, 91, 107, 0.25);
+  color: var(--bad);
+  border: 1px solid rgba(239, 91, 107, 0.4);
+}
+
+.gate-meta {
+  font-size: 0.75rem;
+  color: var(--text-dim);
+  line-height: 1.5;
+}
+
+.gate-progress {
+  height: 4px;
+  background: rgba(118, 134, 168, 0.15);
+  border-radius: 2px;
+  overflow: hidden;
+  margin: 0.75rem 0;
+}
+
+.gate-progress-bar {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent-primary), var(--ok));
+  transition: width 0.5s ease;
+}
+
+/* Section header */
+.section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.section-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+/* Banner styles */
+.banner {
+  padding: 0.875rem 1.25rem;
+  border-radius: 10px;
+  font-size: 0.875rem;
+  line-height: 1.5;
+  border: 1px solid;
+}
+
+.banner-warn {
+  background: rgba(240, 165, 0, 0.12);
+  border-color: rgba(240, 165, 0, 0.3);
+  color: #ffb84d;
+}
+
+.banner-offline {
+  background: rgba(239, 91, 107, 0.12);
+  border-color: rgba(239, 91, 107, 0.3);
+  color: #ff8a9a;
+}
+
+/* Utility classes */
+.hidden { display: none !important; }
+
+/* Responsive spacing for network health */
+@media (max-width: 640px) {
+  .page-content {
+    padding: 1rem;
+  }
+  
+  .section-header {
+    margin-bottom: 1rem;
+  }
+  
+  .gate-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Smooth animations */
+@media (prefers-reduced-motion: no-preference) {
+  .panel-blade,
+  .metric-card,
+  .gate-card,
+  .chip,
+  .micro-badge {
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+}
+
+/* Print styles */
+@media print {
+  .panel-actions,
+  .micro-badge,
+  button {
+    display: none !important;
+  }
+  
+  .panel-blade {
+    break-inside: avoid;
+  }
+}

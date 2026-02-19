@@ -245,7 +245,144 @@ function formatBlockChange(amount) {
     return `${sign}${Math.abs(amount).toFixed(2)} BLOCK`;
 }
 
+/**
+ * Gate Routing Policy (Centralized)
+ * Enforces consistent gate checking across all pages
+ * 
+ * @param {Object} options
+ * @param {string} options.page - Current page name (e.g., 'dashboard', 'network', 'trading')
+ * @param {boolean} options.allowOverrideParams - Allow ?force=1 or ?nogate=1 to bypass
+ * @param {Function} options.onGated - Callback when gates are closed (optional)
+ * @param {Function} options.onOpen - Callback when gates are open (optional)
+ * @returns {Promise<Object>} { gated: boolean, gates: Array, reason: string }
+ */
+async function enforceGatePolicy({ page, allowOverrideParams = true, onGated, onOpen } = {}) {
+    try {
+        // Check override params
+        if (allowOverrideParams && typeof URLSearchParams !== 'undefined') {
+            const params = new URLSearchParams(window.location.search);
+            if (params.get('force') === '1' || params.get('nogate') === '1') {
+                console.log(`[GatePolicy] Override detected for ${page}, bypassing gate check`);
+                return { gated: false, gates: [], reason: 'override' };
+            }
+        }
+        
+        // Fetch gate status
+        const apiBase = currentApiBase();
+        const res = await fetch(`${apiBase}/theblock/gates`, { cache: 'no-store' });
+        
+        if (!res.ok) {
+            console.warn(`[GatePolicy] Gate endpoint returned ${res.status}`);
+            // Fail open: if we can't check gates, allow access but log warning
+            return { gated: false, gates: [], reason: 'endpoint_error' };
+        }
+        
+        const gates = await res.json();
+        
+        if (!Array.isArray(gates)) {
+            console.warn('[GatePolicy] Gate response is not an array:', gates);
+            return { gated: false, gates: [], reason: 'invalid_response' };
+        }
+        
+        // Determine if any gates are NOT in TRADE mode
+        const closedGates = gates.filter(g => (g.state || '').toLowerCase() !== 'trade');
+        const isGated = closedGates.length > 0;
+        
+        const result = {
+            gated: isGated,
+            gates: gates,
+            closedGates: closedGates,
+            openGates: gates.filter(g => (g.state || '').toLowerCase() === 'trade'),
+            reason: isGated ? `${closedGates.length}/${gates.length} markets gated` : 'all_open'
+        };
+        
+        // Execute callbacks
+        if (isGated && onGated) {
+            onGated(result);
+        } else if (!isGated && onOpen) {
+            onOpen(result);
+        }
+        
+        return result;
+    } catch (error) {
+        console.error('[GatePolicy] Error checking gates:', error);
+        // Fail open on error
+        return { gated: false, gates: [], reason: 'exception', error };
+    }
+}
+
+/**
+ * Show Gate Banner (non-blocking notification)
+ * Displays a persistent banner instead of redirecting
+ * 
+ * @param {Object} gateStatus - Result from enforceGatePolicy
+ * @param {string} containerId - ID of container to append banner to (default: 'main-content')
+ */
+function showGateBanner(gateStatus, containerId = 'main-content') {
+    if (!gateStatus.gated) return;
+    
+    const container = document.getElementById(containerId);
+    if (!container) return;
+    
+    // Check if banner already exists
+    if (document.getElementById('gate-policy-banner')) return;
+    
+    const banner = document.createElement('div');
+    banner.id = 'gate-policy-banner';
+    banner.className = 'panel panel--glass p-4 mb-4 border-warn/30';
+    banner.innerHTML = `
+        <div class="flex items-start gap-3">
+            <svg class="w-5 h-5 text-warn flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+                <path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/>
+            </svg>
+            <div class="flex-1">
+                <p class="text-sm font-semibold text-white">Markets Gated: Trading Disabled</p>
+                <p class="text-xs text-gray-400 mt-1">${gateStatus.reason}. <a href="network.html" class="text-warn underline hover:text-amber-300">View Network Health</a> for details.</p>
+                <div class="flex gap-2 mt-2">
+                    ${gateStatus.closedGates.slice(0, 3).map(g => 
+                        `<span class="badge">${g.market || 'unknown'}: ${g.state || 'closed'}</span>`
+                    ).join('')}
+                    ${gateStatus.closedGates.length > 3 ? `<span class="badge">+${gateStatus.closedGates.length - 3} more</span>` : ''}
+                </div>
+            </div>
+            <button id="gate-banner-dismiss" class="text-gray-400 hover:text-white" aria-label="Dismiss banner">
+                <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                    <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"/>
+                </svg>
+            </button>
+        </div>
+    `;
+    
+    container.prepend(banner);
+    
+    // Dismiss handler
+    const dismissBtn = document.getElementById('gate-banner-dismiss');
+    if (dismissBtn) {
+        dismissBtn.addEventListener('click', () => {
+            banner.remove();
+            sessionStorage.setItem('gateBannerDismissed', 'true');
+        });
+    }
+}
+
+/**
+ * Redirect to Network Health (for critical pages only)
+ * Use this ONLY for pages that are truly unsafe when gated
+ * 
+ * @param {Object} gateStatus - Result from enforceGatePolicy
+ * @param {string} fromPage - Current page name for tracking
+ */
+function redirectToNetworkHealth(gateStatus, fromPage) {
+    if (!gateStatus.gated) return;
+    
+    console.log(`[GatePolicy] Redirecting from ${fromPage} to network.html due to gating`);
+    window.location.replace(`network.html?gated=1&from=${encodeURIComponent(fromPage)}`);
+}
+
 // Export helpers
+utilsRoot.enforceGatePolicy = enforceGatePolicy;
+utilsRoot.showGateBanner = showGateBanner;
+utilsRoot.redirectToNetworkHealth = redirectToNetworkHealth;
 utilsRoot.formatPercent = formatPercent;
 utilsRoot.formatBlock = formatBlock;
 utilsRoot.formatBlockChange = formatBlockChange;

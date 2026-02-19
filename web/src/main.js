@@ -1,601 +1,470 @@
-// First-party, dependency-free SPA with hash routing and lightweight rendering.
+// Block Buster Dashboard - First-party, zero-dependency SPA
+// Architecture: Observable state + lifecycle management + declarative rendering
 
-const API_BASE = window.BLOCK_BUSTER_API || "http://localhost:5000";
+import appState from './state.js';
+import RpcClient from './rpc.js';
+import MockRpcClient from './rpc-mock.js';
+import Router from './router.js';
+import Navigation from './components/Navigation.js';
+import ConnectionStatus from './components/ConnectionStatus.js';
+import MockModeNotice from './components/MockModeNotice.js';
+import WhatsNewModal from './components/WhatsNewModal.js';
+import KeyboardShortcuts from './components/KeyboardShortcuts.js';
+import TheBlock from './components/TheBlock.js';
+import Economics from './components/Economics.js';
+import Trading from './components/Trading.js';
+import Network from './components/Network.js';
+import EnergyMarket from './components/EnergyMarket.js';
+import AdMarket from './components/AdMarket.js';
+import ComputeMarket from './components/ComputeMarket.js';
+import StorageMarket from './components/StorageMarket.js';
+import Governance from './components/Governance.js';
+import Treasury from './components/Treasury.js';
+import BlockWebSocket from './ws.js';
+import errorBoundary from './errors.js';
+import features from './features.js';
+import perf from './perf.js';
+import { $ } from './utils.js';
+
+// Configuration
+const API_BASE = window.BLOCK_BUSTER_API || 'http://localhost:5000';
+const WS_URL = window.BLOCK_BUSTER_WS || 'ws://localhost:5000/ws';
 const HEALTH_URL = window.BLOCK_BUSTER_HEALTH || `${API_BASE}/health`;
 
-const state = {
-  route: window.location.hash.replace("#", "") || "theblock",
-  offline: false,
-  _pendingRender: false,
-  metrics: {
-    tps: 1280,
-    fees: 0.15,
-    latencyMs: 42,
-    peers: 312,
-    blockHeight: 982345,
-    issuance: 12.3,
-  },
-  priceHistory: [12, 18, 14, 20, 25, 21, 26, 24, 28, 27],
-  orders: [
-    { token: "BLOCK", side: "BUY", qty: 120, price: 1.12 },
-    { token: "BLOCK", side: "SELL", qty: 80, price: 1.15 },
-    { token: "GPU", side: "BUY", qty: 5, price: 220.0 },
-  ],
-  network: {
+// Initialize RPC client (real or mock based on feature flag and backend availability)
+let rpc;
+let backendAvailable = false;
+
+function initializeRpcClient(forceMock = false) {
+  // Check if mock mode is forced or enabled
+  if (forceMock || features.isEnabled('mock_rpc')) {
+    console.log('[App] Using mock RPC client with realistic blockchain data');
+    return new MockRpcClient(API_BASE);
+  }
+  
+  // Use real RPC client
+  console.log('[App] Using real RPC client');
+  return new RpcClient(API_BASE, {
+    timeout: 30000,
+    retries: 3,
+    retryDelay: 1000,
+  });
+}
+
+// Initialize WebSocket (conditional on feature flag)
+let websocket = null;
+
+// Initialize router
+const router = new Router();
+
+// Define routes configuration
+const routesConfig = [
+  { path: 'theblock', label: 'The Block', component: TheBlock },
+  { path: 'economics', label: 'Economics', component: Economics },
+  { path: 'energy', label: 'Energy Market', component: EnergyMarket },
+  { path: 'ads', label: 'Ad Market', component: AdMarket },
+  { path: 'compute', label: 'Compute Market', component: ComputeMarket },
+  { path: 'storage', label: 'Storage Market', component: StorageMarket },
+  { path: 'governance', label: 'Governance', component: Governance },
+  { path: 'treasury', label: 'Treasury', component: Treasury },
+  { path: 'trading', label: 'Trading', component: Trading },
+  { path: 'network', label: 'Network', component: Network },
+];
+
+// Initialize components (will be created after RPC client is initialized)
+const components = {};
+
+// Initialize navigation
+const navigation = new Navigation(routesConfig);
+
+// Initialize connection status indicator
+const connectionStatus = new ConnectionStatus();
+
+// Initialize What's New modal
+const whatsNewModal = new WhatsNewModal();
+
+// Initialize keyboard shortcuts (will be passed router later)
+let keyboardShortcuts = null;
+
+// Initialize mock mode notice
+const mockModeNotice = new MockModeNotice();
+
+// Initialize global state
+function initializeState() {
+  // Set initial state values
+  appState.set('offline', false);
+  appState.set('route', router.getCurrentPath());
+
+  // Mock data for initial render (will be replaced by API calls)
+  appState.set('metrics', {
+    tps: 0,
+    fees: 0,
+    latencyMs: 0,
+    peers: 0,
+    blockHeight: 0,
+    issuance: 0,
+  });
+
+  appState.set('priceHistory', [12, 18, 14, 20, 25, 21, 26, 24, 28, 27]);
+
+  appState.set('orders', [
+    { token: 'BLOCK', side: 'BUY', qty: 120, price: 1.12, timestamp: Date.now() },
+    { token: 'BLOCK', side: 'SELL', qty: 80, price: 1.15, timestamp: Date.now() },
+    { token: 'GPU', side: 'BUY', qty: 5, price: 220.0, timestamp: Date.now() },
+  ]);
+
+  appState.set('network', {
     metrics: null,
     markets: null,
     scheduler: null,
     peers: null,
     lastUpdated: null,
     error: null,
-  },
-  fullcheck: {
-    status: "idle",
+  });
+
+  appState.set('fullcheck', {
+    status: 'idle',
     running: false,
     steps: [],
     summary_score: null,
     duration_ms: null,
     started_at: null,
     error: null,
-  },
-  fullcheckInput: {
-    domain: "demo.block",
+  });
+
+  appState.set('fullcheckInput', {
+    domain: 'demo.block',
     fileMeta: null,
     hashing: false,
     storageDryRun: false,
-  },
-};
-
-const $ = (sel) => document.querySelector(sel);
-
-function debounce(fn, delay = 80) {
-  let t;
-  return (...args) => {
-    clearTimeout(t);
-    t = setTimeout(() => fn(...args), delay);
-  };
-}
-
-function scheduleRender() {
-  if (state._pendingRender) return;
-  state._pendingRender = true;
-  requestAnimationFrame(() => {
-    state._pendingRender = false;
-    renderNow();
   });
 }
 
-function navLink(id, label) {
-  const a = document.createElement("a");
-  a.href = `#${id}`;
-  a.textContent = label;
-  if (state.route === id) a.classList.add("active");
-  a.onclick = () => {
-    state.route = id;
-    scheduleRender();
-  };
-  return a;
-}
-
-function card(title, value, extra) {
-  const c = document.createElement("div");
-  c.className = "card";
-  const h = document.createElement("h3");
-  h.textContent = title;
-  const v = document.createElement("div");
-  v.className = "value";
-  v.textContent = value;
-  c.append(h, v);
-  if (extra) c.append(extra);
-  return c;
-}
-
-function miniBars(values) {
-  const wrap = document.createElement("div");
-  wrap.className = "chart";
-  values.forEach((v) => {
-    const bar = document.createElement("div");
-    bar.className = "bar";
-    bar.style.height = `${v + 20}px`;
-    wrap.append(bar);
-  });
-  return wrap;
-}
-
-function ordersList() {
-  const ul = document.createElement("ul");
-  ul.className = "list";
-  state.orders.forEach((o) => {
-    const li = document.createElement("li");
-    li.textContent = `${o.side} ${o.qty} ${o.token} @ ${o.price.toFixed(2)}`;
-    const pill = document.createElement("span");
-    pill.className = "pill";
-    pill.textContent = o.side;
-    li.append(pill);
-    ul.append(li);
-  });
-  return ul;
-}
-
-// Helpers -------------------------------------------------------------------
-
-const fmt = {
-  num: (v) => (v === undefined || v === null ? "—" : Number(v).toLocaleString()),
-  ms: (v) => (v === undefined || v === null ? "—" : `${Math.round(v)} ms`),
-  pct: (v) => (v === undefined || v === null ? "—" : `${v.toFixed(1)}%`),
-  ts: (ms) => new Date(ms).toLocaleTimeString(),
-  size: (bytes) => {
-    if (!bytes && bytes !== 0) return "—";
-    const units = ["B", "KB", "MB", "GB"];
-    let b = bytes;
-    let u = 0;
-    while (b >= 1024 && u < units.length - 1) {
-      b /= 1024;
-      u += 1;
-    }
-    return `${b.toFixed(1)} ${units[u]}`;
-  },
-};
-
-function statusChip(status) {
-  const chip = document.createElement("span");
-  chip.className = `status status-${status}`;
-  chip.textContent = status;
-  return chip;
-}
-
-function stepHighlight(step) {
-  const d = step.data || {};
-  if (typeof d.verified === "boolean") return d.verified ? "verified" : "unverified";
-  if (d.lag_blocks !== undefined) return `lag ${d.lag_blocks} blocks`;
-  if (d.peers !== undefined) return `${d.peers} peers`;
-  if (d.queue_depth !== undefined) return `${d.queue_depth} queued`;
-  if (d.count !== undefined) return `${d.count} receipts`;
-  if (d.provider_count !== undefined) return `${d.provider_count} providers`;
-  if (d.domain) return d.domain;
-  return "";
-}
-
-function stepCard(step) {
-  const wrap = document.createElement("div");
-  wrap.className = "card step-card";
-  const top = document.createElement("div");
-  top.className = "row step-head";
-  const title = document.createElement("div");
-  title.textContent = step.label;
-  top.append(title, statusChip(step.status));
-
-  const sub = document.createElement("div");
-  sub.className = "muted small";
-  const highlight = stepHighlight(step);
-  sub.textContent = `${highlight ? highlight + " · " : ""}${fmt.ms(step.duration_ms || 0)}`;
-
-  const details = document.createElement("details");
-  const summary = document.createElement("summary");
-  summary.textContent = "Details";
-  const pre = document.createElement("pre");
-  pre.textContent = JSON.stringify(step.data || {}, null, 2);
-  details.append(summary, pre);
-
-  wrap.append(top, sub, details);
-  return wrap;
-}
-
-// Rendering -----------------------------------------------------------------
-
-function renderTheBlock() {
-  const content = document.createElement("div");
-  content.className = "content";
-
-  const hero = document.createElement("div");
-  hero.className = "hero";
-  hero.innerHTML = `<h2>The Block Network</h2><p>First-party dashboard with zero third-party JS. Live metrics refreshed via native fetch.</p>`;
-  content.append(hero);
-
-  const grid = document.createElement("div");
-  grid.className = "grid";
-  const { tps, fees, latencyMs, peers, blockHeight, issuance } = state.metrics;
-  grid.append(
-    card("TPS", tps.toLocaleString()),
-    card("Fee (BLOCK)", fees.toFixed(3)),
-    card("P2P Latency (ms)", latencyMs),
-    card("Peers", peers),
-    card("Block Height", blockHeight.toLocaleString()),
-    card("Issuance / hr", `${issuance.toFixed(2)} BLOCK`),
-  );
-  content.append(grid);
-
-  const deferred = document.createElement("div");
-  requestAnimationFrame(() => {
-    const perf = document.createElement("div");
-    perf.className = "card";
-    perf.innerHTML = `<h3>Throughput (10 blocks)</h3>`;
-    perf.append(miniBars(state.priceHistory));
-    const book = document.createElement("div");
-    book.className = "card";
-    book.innerHTML = `<h3>Recent Orders</h3>`;
-    book.append(ordersList());
-    deferred.append(perf, book);
-  });
-  content.append(deferred);
-
-  return content;
-}
-
-function renderTrading() {
-  const content = document.createElement("div");
-  content.className = "content";
-  const hero = document.createElement("div");
-  hero.className = "hero";
-  hero.innerHTML = `<h2>Trading Sandbox</h2><p>Paper trades with locally simulated prices. Modify this page in src/main.js.</p>`;
-  content.append(hero);
-
-  const controls = document.createElement("div");
-  controls.className = "card";
-  controls.innerHTML = `
-    <h3>Quick Actions</h3>
-    <div class="row" style="gap:10px; flex-wrap:wrap;">
-      <button class="btn" data-action="buy">Buy 10 BLOCK</button>
-      <button class="btn" data-action="sell">Sell 10 BLOCK</button>
-      <button class="btn" data-action="reset">Reset Orders</button>
-    </div>
-  `;
-  controls.querySelectorAll("button").forEach((btn) =>
-    btn.addEventListener("click", () => {
-      const action = btn.dataset.action;
-      if (action === "reset") state.orders = [];
-      else {
-        const side = action === "buy" ? "BUY" : "SELL";
-        state.orders.unshift({
-          token: "BLOCK",
-          side,
-          qty: 10,
-          price: 1.1 + Math.random() * 0.1,
-        });
-      }
-      renderNow();
-    }),
-  );
-  content.append(controls);
-
-  const orders = document.createElement("div");
-  orders.className = "card";
-  orders.innerHTML = `<h3>Order Log</h3>`;
-  requestAnimationFrame(() => orders.append(ordersList()));
-  content.append(orders);
-
-  return content;
-}
-
-function renderNetwork() {
-  const content = document.createElement("div");
-  content.className = "content";
-
-  const hero = document.createElement("div");
-  hero.className = "hero";
-  hero.innerHTML = `<h2>Network Health + Proof Board</h2><p>Visual, read-only sweep of consensus, markets, scheduler, receipts, and storage. Runs without third-party code.</p>`;
-  content.append(hero);
-
-  if (state.network.error) {
-    const warn = document.createElement("div");
-    warn.className = "offline";
-    warn.textContent = `Network refresh failed: ${state.network.error}`;
-    content.append(warn);
+// Health check for offline detection
+async function checkHealth() {
+  // Skip health check in mock mode
+  if (features.isEnabled('mock_rpc')) {
+    appState.set('offline', false);
+    return true;
   }
-
-  const metrics = state.network.metrics || {};
-  const metricsGrid = document.createElement("div");
-  metricsGrid.className = "grid";
-  metricsGrid.append(
-    card("Block Height", fmt.num(metrics.block_height ?? metrics.blockHeight ?? null)),
-    card("Finalized", fmt.num(metrics.finalized_height ?? metrics.finalizedHeight ?? null)),
-    card("TPS", fmt.num(metrics.tps ?? null)),
-    card("Peers", fmt.num(metrics.peer_count ?? metrics.connected_peers ?? null)),
-    card("Avg Block Time", fmt.ms(metrics.block_time_ms ?? metrics.avg_block_time_ms)),
-    card("Network Strength", metrics.network_strength !== undefined ? `${metrics.network_strength}` : "—"),
-  );
-  content.append(metricsGrid);
-
-  // Proof board --------------------------------------------------------------
-  const proof = document.createElement("div");
-  proof.className = "card proof";
-  const header = document.createElement("div");
-  header.className = "row space-between";
-  const title = document.createElement("div");
-  title.innerHTML = `<h3 style="margin:0;">Full-Chain Proof Board</h3><div class="muted small">Runs the visual equivalent of run-tests-verbose.sh using read-only RPC sweeps.</div>`;
-  const score = document.createElement("div");
-  score.className = "score";
-  const scoreVal = state.fullcheck.summary_score;
-  score.innerHTML = `<div class="score-value">${scoreVal === null ? "—" : scoreVal}</div><div class="muted small">score</div>`;
-  header.append(title, score);
-  proof.append(header);
-
-  const controls = document.createElement("div");
-  controls.className = "control-grid";
-
-  const domainInput = document.createElement("div");
-  domainInput.className = "control";
-  domainInput.innerHTML = `<label class="muted small">.block domain (optional)</label>`;
-  const domainField = document.createElement("input");
-  domainField.type = "text";
-  domainField.value = state.fullcheckInput.domain;
-  domainField.placeholder = "demo.block";
-  domainField.oninput = (e) => {
-    state.fullcheckInput.domain = e.target.value;
-  };
-  domainInput.append(domainField);
-
-  const fileInputWrap = document.createElement("div");
-  fileInputWrap.className = "control";
-  fileInputWrap.innerHTML = `<label class="muted small">Storage sample file (optional)</label>`;
-  const fileInput = document.createElement("input");
-  fileInput.type = "file";
-  fileInput.onchange = (e) => handleFileSelect(e.target.files && e.target.files[0]);
-  fileInputWrap.append(fileInput);
-  if (state.fullcheckInput.fileMeta) {
-    const fm = state.fullcheckInput.fileMeta;
-    const meta = document.createElement("div");
-    meta.className = "file-meta";
-    meta.textContent = `${fm.name} · ${fmt.size(fm.size_bytes)} · ${fm.sha256.slice(0, 10)}…`;
-    fileInputWrap.append(meta);
-  } else if (state.fullcheckInput.hashing) {
-    const meta = document.createElement("div");
-    meta.className = "file-meta";
-    meta.textContent = "Hashing file…";
-    fileInputWrap.append(meta);
-  }
-
-  const dryRunControl = document.createElement("div");
-  dryRunControl.className = "control";
-  dryRunControl.innerHTML = `<label class="muted small">Storage put dry-run</label>`;
-  const dryRunToggle = document.createElement("input");
-  dryRunToggle.type = "checkbox";
-  dryRunToggle.checked = state.fullcheckInput.storageDryRun;
-  dryRunToggle.onchange = (e) => {
-    state.fullcheckInput.storageDryRun = e.target.checked;
-  };
-  dryRunControl.append(dryRunToggle, document.createTextNode(" Use storage.put (dry-run, no persistence)"));
-
-  const runBtn = document.createElement("button");
-  runBtn.className = "btn primary";
-  runBtn.textContent = state.fullcheck.running ? "Running…" : "Run visual suite";
-  runBtn.disabled = state.fullcheck.running || state.fullcheckInput.hashing || state.offline;
-  runBtn.onclick = runFullCheck;
-
-  controls.append(domainInput, fileInputWrap, dryRunControl, runBtn);
-  proof.append(controls);
-
-  if (state.fullcheck.error) {
-    const err = document.createElement("div");
-    err.className = "offline";
-    err.textContent = `Full check failed: ${state.fullcheck.error}`;
-    proof.append(err);
-  }
-
-  const stepsGrid = document.createElement("div");
-  stepsGrid.className = "grid steps-grid";
-  const steps = state.fullcheck.steps || [];
-  if (state.fullcheck.running) {
-    const loading = document.createElement("div");
-    loading.className = "muted";
-    loading.textContent = "Running full-chain sweep…";
-    proof.append(loading);
-  }
-  if (steps.length === 0 && !state.fullcheck.running) {
-    const placeholder = document.createElement("div");
-    placeholder.className = "muted small";
-    placeholder.textContent = "No run yet. Configure options and hit “Run visual suite”.";
-    proof.append(placeholder);
-  } else {
-    steps.forEach((s) => stepsGrid.append(stepCard(s)));
-    proof.append(stepsGrid);
-  }
-
-  if (steps.length > 0) {
-    const raw = document.createElement("details");
-    const summary = document.createElement("summary");
-    summary.textContent = "Raw response";
-    const pre = document.createElement("pre");
-    pre.textContent = JSON.stringify(
-      {
-        summary_score: state.fullcheck.summary_score,
-        duration_ms: state.fullcheck.duration_ms,
-        steps,
-      },
-      null,
-      2,
-    );
-    raw.append(summary, pre);
-    proof.append(raw);
-  }
-
-  content.append(proof);
-
-  // Network artefacts
-  const artifacts = document.createElement("div");
-  artifacts.className = "card";
-  artifacts.innerHTML = `<h3>Live inputs</h3><div class="muted small">Auto-refreshed every 2s from /theblock/* endpoints.</div>`;
-  const mini = document.createElement("div");
-  mini.className = "grid";
-  mini.append(
-    card("Markets healthy", state.network.markets ? `${state.network.markets.healthy_markets}/${state.network.markets.total_markets}` : "—"),
-    card("Scheduler queue", state.network.scheduler ? fmt.num(state.network.scheduler.queue_depth) : "—"),
-    card("Peers listed", state.network.peers ? fmt.num(state.network.peers.total) : "—"),
-  );
-  artifacts.append(mini);
-  if (state.network.lastUpdated) {
-    const stamp = document.createElement("div");
-    stamp.className = "muted small";
-    stamp.textContent = `Last updated ${fmt.ts(state.network.lastUpdated)}`;
-    artifacts.append(stamp);
-  }
-  content.append(artifacts);
-
-  return content;
-}
-
-function offlineBanner() {
-  if (!state.offline) return null;
-  const banner = document.createElement("div");
-  banner.className = "offline";
-  banner.textContent = "Offline: retrying backend heartbeat...";
-  return banner;
-}
-
-function renderNow() {
-  const app = $("#app");
-  app.innerHTML = "";
-
-  const shell = document.createElement("div");
-  shell.className = "app-shell";
-
-  const side = document.createElement("aside");
-  side.className = "sidebar";
-  const brand = document.createElement("div");
-  brand.className = "brand";
-  brand.textContent = "Block Buster · First-Party";
-  const nav = document.createElement("div");
-  nav.className = "nav";
-  nav.append(
-    navLink("theblock", "The Block"),
-    navLink("network", "Network"),
-    navLink("trading", "Trading"),
-  );
-  side.append(brand, nav);
-
-  const main = document.createElement("main");
-  main.className = "main";
-  const banner = offlineBanner();
-  if (banner) main.append(banner);
-
-  const page = state.route === "network" ? renderNetwork() : state.route === "trading" ? renderTrading() : renderTheBlock();
-  main.append(page);
-
-  shell.append(side, main);
-  app.append(shell);
-}
-
-// Data fetching -------------------------------------------------------------
-
-async function api(path, options = {}) {
-  const resp = await fetch(`${API_BASE}${path}`, {
-    cache: "no-store",
-    ...options,
-  });
-  const data = await resp.json().catch(() => ({}));
-  if (!resp.ok) {
-    const detail = data && data.detail ? data.detail : resp.statusText;
-    throw new Error(detail);
-  }
-  return data;
-}
-
-async function refreshNetwork() {
+  
   try {
-    const metrics = await api("/theblock/network/metrics");
-    const markets = await api("/theblock/markets/health").catch(() => null);
-    const scheduler = await api("/theblock/scheduler/stats").catch(() => null);
-    const peers = await api("/theblock/peers/list").catch(() => null);
+    // Use manual AbortController for compatibility
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 3000); // 3s timeout
 
-    state.network.metrics = metrics;
-    state.network.markets = markets;
-    state.network.scheduler = scheduler;
-    state.network.peers = peers;
-    state.network.lastUpdated = Date.now();
-    state.network.error = null;
-  } catch (err) {
-    state.network.error = err.message;
-  }
-  scheduleRender();
-}
-
-async function runFullCheck() {
-  if (state.fullcheck.running) return;
-  state.fullcheck.running = true;
-  state.fullcheck.status = "running";
-  state.fullcheck.error = null;
-  scheduleRender();
-  try {
-    const payload = {
-      storage_duration_epochs: 8,
-    };
-    if (state.fullcheckInput.domain && state.fullcheckInput.domain.trim()) {
-      payload.domain = state.fullcheckInput.domain.trim();
-    }
-    if (state.fullcheckInput.fileMeta) {
-      payload.file = state.fullcheckInput.fileMeta;
-    }
-    if (state.fullcheckInput.storageDryRun) {
-      payload.storage_dry_run = true;
-    }
-    const data = await api("/theblock/fullcheck", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
+    const response = await fetch(HEALTH_URL, {
+      method: 'GET',
+      headers: { 'Content-Type': 'application/json' },
+      signal: controller.signal,
     });
-    state.fullcheck = {
-      ...data,
-      status: "done",
-      running: false,
-      error: null,
-    };
-  } catch (err) {
-    state.fullcheck.running = false;
-    state.fullcheck.status = "error";
-    state.fullcheck.error = err.message;
+
+    clearTimeout(timeoutId);
+
+    if (!response.ok) {
+      console.warn('[App] Health check returned:', response.status);
+      appState.set('offline', true);
+      return false;
+    }
+
+    // Require a live node, not just the dashboard host
+    const data = await response.json().catch(() => ({}));
+    const bootstrap = data?.bootstrap || {};
+    const rpcConnected = Boolean(
+      bootstrap.rpc_connected ?? bootstrap.genesis_ready ?? false,
+    );
+
+    if (!rpcConnected) {
+      console.warn('[App] Health check: dashboard up but node unavailable');
+      appState.set('offline', true);
+      return false;
+    }
+
+    appState.set('offline', false);
+    return true;
+  } catch (error) {
+    if (error.name === 'AbortError') {
+      console.log('[App] Health check timeout - backend unavailable');
+    } else {
+      console.warn('[App] Health check failed:', error.message);
+    }
+    appState.set('offline', true);
+    return false;
   }
-  scheduleRender();
 }
 
-async function handleFileSelect(file) {
-  if (!file) {
-    state.fullcheckInput.fileMeta = null;
-    scheduleRender();
-    return;
+// Offline banner management
+function initializeOfflineBanner() {
+  appState.subscribe('offline', (isOffline) => {
+    requestAnimationFrame(() => updateOfflineBanner(isOffline));
+  });
+}
+
+function updateOfflineBanner(isOffline) {
+  let banner = $('#offline-banner');
+
+  if (isOffline) {
+    if (!banner) {
+      banner = document.createElement('div');
+      banner.id = 'offline-banner';
+      banner.className = 'offline-banner';
+      banner.innerHTML = `
+        <span>⚠️ Offline: API unreachable. Showing cached data.</span>
+        <button id="retry-connection">Retry</button>
+      `;
+
+      const retryBtn = banner.querySelector('#retry-connection');
+      if (retryBtn) {
+        retryBtn.addEventListener('click', () => checkHealth());
+      }
+
+      document.body.insertBefore(banner, document.body.firstChild);
+    }
+  } else {
+    if (banner) {
+      banner.remove();
+    }
   }
-  state.fullcheckInput.hashing = true;
-  scheduleRender();
+}
+
+// Performance monitoring
+function initializePerformanceMonitoring() {
+  // Set custom budgets
+  perf.setBudget('render', 16.67); // 60fps
+  perf.setBudget('fetch', 300);
+  perf.setBudget('interaction', 100);
+
+  // Log web vitals on load
+  window.addEventListener('load', () => {
+    setTimeout(() => {
+      const vitals = perf.getWebVitals();
+      console.log('[Perf] Web Vitals:', vitals);
+
+      // Log budget violations
+      const stats = perf.getStats();
+      if (stats) {
+        console.log('[Perf] Performance Stats:', stats);
+      }
+    }, 2000);
+  });
+}
+
+// Error reporting
+function initializeErrorReporting() {
+  // Set error reporting endpoint (if available)
+  if (window.BLOCK_BUSTER_ERROR_ENDPOINT) {
+    errorBoundary.setReportEndpoint(window.BLOCK_BUSTER_ERROR_ENDPOINT);
+  }
+
+  // Optional: Display recent errors in console
+  if (window.location.hostname === 'localhost') {
+    window.getRecentErrors = () => errorBoundary.getRecentErrors();
+    console.log('[Dev] Run getRecentErrors() to see error history');
+  }
+}
+
+// Feature flags debugging
+function initializeFeatureFlags() {
+  // Log enabled features
+  const enabledFeatures = features.getAll();
+  console.log('[Features] Enabled:', enabledFeatures);
+
+  // Expose feature flags in dev mode
+  if (window.location.hostname === 'localhost') {
+    window.features = features;
+    console.log('[Dev] Use window.features to toggle feature flags');
+  }
+}
+
+// WebSocket real-time updates
+function initializeWebSocket() {
+  if (!features.isEnabled('websockets')) {
+    console.log('[WS] WebSocket disabled via feature flag');
+    return null;
+  }
+
   try {
-    const buf = await file.arrayBuffer();
-    const hashBuf = await crypto.subtle.digest("SHA-256", buf);
-    const hashArr = Array.from(new Uint8Array(hashBuf));
-    const hashHex = hashArr.map((b) => b.toString(16).padStart(2, "0")).join("");
-    state.fullcheckInput.fileMeta = {
-      name: file.name,
-      size_bytes: file.size,
-      sha256: hashHex,
-      preview_only: true,
-    };
-  } catch (err) {
-    state.fullcheck.error = `File hash failed: ${err.message}`;
-  } finally {
-    state.fullcheckInput.hashing = false;
-    scheduleRender();
+    websocket = new BlockWebSocket(WS_URL, {
+      maxReconnectAttempts: 10,
+      pingInterval: 30000,
+    });
+
+    websocket.mount();
+    console.log('[WS] WebSocket initialized');
+
+    // Subscribe to connection status
+    appState.subscribe('ws', (wsState) => {
+      if (wsState.connected) {
+        console.log('[WS] Connected - disabling polling');
+        appState.set('usePolling', false);
+      } else {
+        console.log('[WS] Disconnected - falling back to polling');
+        appState.set('usePolling', true);
+      }
+    });
+
+    return websocket;
+  } catch (error) {
+    console.error('[WS] Failed to initialize:', error);
+    appState.set('usePolling', true);
+    return null;
   }
 }
 
-async function pingBackend() {
-  try {
-    const resp = await fetch(HEALTH_URL, { method: "GET", cache: "no-store" });
-    state.offline = !resp.ok;
-  } catch (e) {
-    state.offline = true;
+// Global state debugging
+function initializeStateDebugging() {
+  if (window.location.hostname === 'localhost') {
+    window.appState = appState;
+    window.getStateHistory = (key = null) => appState.getHistory(key);
+    console.log('[Dev] Use window.appState to inspect state');
+    console.log('[Dev] Use getStateHistory(key) to see change history');
   }
-  scheduleRender();
 }
 
-// Event wiring --------------------------------------------------------------
+// Main initialization
+async function init() {
+  perf.mark('app-init-start');
 
-const onHashChange = debounce(() => {
-  state.route = window.location.hash.replace("#", "") || "theblock";
-  scheduleRender();
-});
+  console.log('[App] Initializing Block Buster Dashboard...');
 
-window.addEventListener("hashchange", onHashChange);
+  // Initialize subsystems
+  initializeState();
+  initializeOfflineBanner();
+  initializePerformanceMonitoring();
+  initializeErrorReporting();
+  initializeFeatureFlags();
+  initializeStateDebugging();
+  
+  // Check API health first (before showing UI)
+  backendAvailable = await checkHealth();
+  console.log(`[App] Backend status: ${backendAvailable ? 'CONNECTED' : 'UNAVAILABLE'}`);
+  
+  // If backend unavailable and not in mock mode, show interstitial
+  if (!backendAvailable && !features.isEnabled('mock_rpc')) {
+    console.log('[App] Backend unavailable - showing mock mode interstitial');
+    
+    // Show interstitial screen and wait for user action
+    await new Promise((resolve) => {
+      mockModeNotice.showInterstitial(() => {
+        // User clicked "Continue with Mock Data"
+        features.enable('mock_rpc');
+        console.log('[App] Mock mode enabled with realistic blockchain data');
+        resolve();
+      });
+    });
+  }
+  
+  // Initialize RPC client (real or mock based on backend availability)
+  const useMock = !backendAvailable || features.isEnabled('mock_rpc');
+  rpc = initializeRpcClient(useMock);
+  
+  // Show persistent notice banner if using mock mode
+  if (useMock) {
+    mockModeNotice.mount();
+    // Delay banner slightly so navigation loads first
+    setTimeout(() => {
+      mockModeNotice.show(() => {
+        console.log('[App] Mock mode notice dismissed');
+      });
+    }, 1500);
+  }
+  
+  // Initialize components with RPC client
+  components.theblock = new TheBlock(rpc);
+  components.energyMarket = new EnergyMarket(rpc);
+  components.adMarket = new AdMarket(rpc);
+  components.computeMarket = new ComputeMarket(rpc);
+  components.storageMarket = new StorageMarket(rpc);
+  components.governance = new Governance(rpc);
+  components.treasury = new Treasury(rpc);
+  components.trading = new Trading(rpc);
+  components.network = new Network(rpc);
+  
+  // Re-register routes with updated components
+  router
+    .register('theblock', components.theblock)
+    .register('energy', components.energyMarket)
+    .register('ads', components.adMarket)
+    .register('compute', components.computeMarket)
+    .register('storage', components.storageMarket)
+    .register('governance', components.governance)
+    .register('treasury', components.treasury)
+    .register('trading', components.trading)
+    .register('network', components.network)
+    .setDefault('theblock');
+  
+  // Initialize WebSocket if backend available and feature enabled
+  if (backendAvailable && !useMock && features.isEnabled('websockets')) {
+    websocket = initializeWebSocket();
+  }
+  
+  // Set initial polling state
+  appState.set('usePolling', useMock || !features.isEnabled('websockets'));
 
-// Initial render + polling
-scheduleRender();
-refreshNetwork();
-setInterval(refreshNetwork, 2000);
-setInterval(pingBackend, 10000);
-pingBackend();
+  // Mount navigation
+  navigation.mount();
+
+  // Mount connection status indicator
+  connectionStatus.mount();
+
+  // Mount What's New modal (auto-shows if new version)
+  whatsNewModal.mount();
+
+  // Initialize and mount keyboard shortcuts
+  keyboardShortcuts = new KeyboardShortcuts(router);
+  keyboardShortcuts.mount();
+
+  // Register keyboard shortcuts handler
+  document.addEventListener('keydown', (e) => {
+    keyboardShortcuts.handleKeyboardShortcuts(e);
+  });
+
+  // Mount router (handles initial route)
+  router.mount();
+
+  // Global cleanup on page unload
+  window.addEventListener('beforeunload', () => {
+    console.log('[App] Unmounting all components...');
+    if (websocket) websocket.unmount();
+    router.unmount();
+    navigation.unmount();
+    connectionStatus.unmount();
+    whatsNewModal.unmount();
+    keyboardShortcuts.unmount();
+    Object.values(components).forEach((component) => {
+      if (component.unmount) component.unmount();
+    });
+  });
+
+  perf.measure('app-init', 'app-init-start', 'interaction');
+  console.log('[App] Initialization complete');
+}
+
+// Wait for DOM ready
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', init);
+} else {
+  init();
+}
+
+// Expose for debugging
+if (window.location.hostname === 'localhost') {
+  window.perf = perf;
+  window.router = router;
+  window.rpc = rpc;
+  window.ws = websocket;
+  window.enableMockMode = () => {
+    features.enable('mock_rpc');
+    console.log('[Dev] Mock mode enabled. Reload page to take effect.');
+    console.log('[Dev] Run: location.reload()');
+  };
+  window.disableMockMode = () => {
+    features.disable('mock_rpc');
+    console.log('[Dev] Mock mode disabled. Reload page to take effect.');
+    console.log('[Dev] Run: location.reload()');
+  };
+  console.log('[Dev] Exposed: window.perf, window.router, window.rpc, window.ws');
+  console.log('[Dev] Helpers: window.enableMockMode(), window.disableMockMode()');
+}
+import './styles/trading.css';
+import './styles/economics.css';

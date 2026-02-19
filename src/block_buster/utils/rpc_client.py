@@ -1,10 +1,10 @@
-"""Simple JSON-RPC client - Basic RPC wrapper for blockchain nodes.
+"""Simple JSON-RPC client - Basic RPC wrapper for The Block blockchain.
 
 Provides basic JSON-RPC 2.0 client using stdlib only.
 No third-party dependencies - uses urllib and json.
 
-For full Solana SDK features, use solana-py.
-This module provides simple RPC calls for basic queries.
+For The Block RPC API documentation, see: ~/projects/the-block/docs/apis_and_tooling.md
+This module provides methods matching The Block's actual RPC namespaces.
 """
 
 import json
@@ -14,9 +14,20 @@ from typing import Any, Dict, List, Optional, Union
 from dataclasses import dataclass
 
 
+# The Block RPC Error Codes
+RPC_ERROR_CODES = {
+    "AUTH_MISSING": -33009,
+    "RATE_LIMIT": -33010,
+}
+
+
 class RPCException(Exception):
     """RPC request failed."""
-    pass
+    
+    def __init__(self, message: str, code: Optional[int] = None, data: Any = None):
+        super().__init__(message)
+        self.code = code
+        self.data = data
 
 
 @dataclass
@@ -37,7 +48,7 @@ class JSONRPCClient:
     
     Example:
         client = JSONRPCClient("http://localhost:8545")
-        result = client.call("eth_blockNumber")
+        result = client.call("consensus.block_height")
         print(f"Block: {result}")
     """
     
@@ -73,7 +84,7 @@ class JSONRPCClient:
         """Make JSON-RPC call.
         
         Args:
-            method: RPC method name
+            method: RPC method name (e.g., 'consensus.block_height')
             params: Method parameters (list or dict)
             request_id: Request ID (auto-generated if None)
         
@@ -122,7 +133,8 @@ class JSONRPCClient:
             error = data["error"]
             code = error.get("code", -1)
             message = error.get("message", "Unknown error")
-            raise RPCException(f"RPC error {code}: {message}")
+            error_data = error.get("data")
+            raise RPCException(f"RPC error {code}: {message}", code=code, data=error_data)
         
         return data.get("result")
     
@@ -140,8 +152,8 @@ class JSONRPCClient:
         
         Example:
             results = client.batch_call([
-                ("eth_blockNumber", []),
-                ("eth_getBalance", ["0x123...", "latest"]),
+                ("consensus.block_height", []),
+                ("ledger.balance", ["account_address"]),
             ])
         """
         batch_payload = []
@@ -175,184 +187,14 @@ class JSONRPCClient:
         for resp in sorted_responses:
             if "error" in resp:
                 error = resp["error"]
-                results.append(RPCException(f"RPC error: {error.get('message')}"))
+                results.append(RPCException(f"RPC error: {error.get('message')}", 
+                                          code=error.get('code'), 
+                                          data=error.get('data')))
             else:
                 results.append(resp.get("result"))
         
         return results
 
 
-class TheBlockRPCClient(JSONRPCClient):
-    """RPC client for The Block blockchain.
-    
-    Convenience wrapper with The Block-specific methods.
-    
-    Example:
-        client = TheBlockRPCClient("http://localhost:8545")
-        block = client.get_block_number()
-        balance = client.get_balance("0x123...")
-    """
-    
-    def get_block_number(self) -> int:
-        """Get current block number."""
-        result = self.call("tb_blockNumber")
-        return int(result, 16) if isinstance(result, str) else result
-    
-    def get_balance(self, address: str, block: str = "latest") -> int:
-        """Get account balance.
-        
-        Args:
-            address: Account address
-            block: Block number or tag ("latest", "earliest", "pending")
-        
-        Returns:
-            Balance in smallest unit
-        """
-        result = self.call("tb_getBalance", [address, block])
-        return int(result, 16) if isinstance(result, str) else result
-    
-    def get_transaction_count(self, address: str, block: str = "latest") -> int:
-        """Get account transaction count (nonce).
-        
-        Args:
-            address: Account address
-            block: Block number or tag
-        
-        Returns:
-            Transaction count
-        """
-        result = self.call("tb_getTransactionCount", [address, block])
-        return int(result, 16) if isinstance(result, str) else result
-    
-    def get_block(self, block_id: Union[int, str], full_transactions: bool = False) -> Dict:
-        """Get block by number or hash.
-        
-        Args:
-            block_id: Block number (int) or hash (str)
-            full_transactions: Include full transaction objects
-        
-        Returns:
-            Block data
-        """
-        if isinstance(block_id, int):
-            block_id = hex(block_id)
-        return self.call("tb_getBlockByNumber", [block_id, full_transactions])
-    
-    def get_transaction(self, tx_hash: str) -> Optional[Dict]:
-        """Get transaction by hash.
-        
-        Args:
-            tx_hash: Transaction hash
-        
-        Returns:
-            Transaction data or None if not found
-        """
-        return self.call("tb_getTransactionByHash", [tx_hash])
-    
-    def send_raw_transaction(self, signed_tx: str) -> str:
-        """Send signed transaction.
-        
-        Args:
-            signed_tx: Signed transaction hex string
-        
-        Returns:
-            Transaction hash
-        """
-        return self.call("tb_sendRawTransaction", [signed_tx])
-    
-    def call_contract(
-        self,
-        to: str,
-         str,
-        from_addr: Optional[str] = None,
-        block: str = "latest"
-    ) -> str:
-        """Call contract method (read-only).
-        
-        Args:
-            to: Contract address
-             Call data (encoded method + params)
-            from_addr: Sender address (optional)
-            block: Block number or tag
-        
-        Returns:
-            Return data hex string
-        """
-        call_data = {"to": to, "data": data}
-        if from_addr:
-            call_data["from"] = from_addr
-        return self.call("tb_call", [call_data, block])
-    
-    def estimate_gas(
-        self,
-        to: str,
-         str,
-        from_addr: Optional[str] = None,
-        value: Optional[int] = None
-    ) -> int:
-        """Estimate gas for transaction.
-        
-        Args:
-            to: Recipient address
-             Transaction data
-            from_addr: Sender address
-            value: Value to send
-        
-        Returns:
-            Estimated gas amount
-        """
-        tx_data = {"to": to, "data": data}
-        if from_addr:
-            tx_data["from"] = from_addr
-        if value is not None:
-            tx_data["value"] = hex(value)
-        
-        result = self.call("tb_estimateGas", [tx_data])
-        return int(result, 16) if isinstance(result, str) else result
-    
-    def get_logs(
-        self,
-        from_block: Optional[Union[int, str]] = None,
-        to_block: Optional[Union[int, str]] = None,
-        address: Optional[Union[str, List[str]]] = None,
-        topics: Optional[List[Optional[str]]] = None
-    ) -> List[Dict]:
-        """Get event logs.
-        
-        Args:
-            from_block: Start block (number or tag)
-            to_block: End block (number or tag)
-            address: Contract address(es) to filter
-            topics: Event topics to filter
-        
-        Returns:
-            List of log entries
-        """
-        filter_params = {}
-        if from_block is not None:
-            filter_params["fromBlock"] = hex(from_block) if isinstance(from_block, int) else from_block
-        if to_block is not None:
-            filter_params["toBlock"] = hex(to_block) if isinstance(to_block, int) else to_block
-        if address is not None:
-            filter_params["address"] = address
-        if topics is not None:
-            filter_params["topics"] = topics
-        
-        return self.call("tb_getLogs", [filter_params])
-
-
-def create_client(endpoint: str, **kwargs) -> JSONRPCClient:
-    """Create RPC client based on endpoint.
-    
-    Args:
-        endpoint: RPC endpoint URL
-        **kwargs: Additional client options
-    
-    Returns:
-        Appropriate RPC client instance
-    """
-    # Auto-detect The Block endpoints
-    if "theblock" in endpoint.lower() or ":8545" in endpoint:
-        return TheBlockRPCClient(endpoint, **kwargs)
-    
-    return JSONRPCClient(endpoint, **kwargs)
+# Alias for compatibility
+TheBlockRPCClient = JSONRPCClient

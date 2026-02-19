@@ -5,6 +5,7 @@
     { label: 'Operate', items: [
       { href: 'dashboard.html', text: 'Dashboard' },
       { href: 'network.html', text: 'Network Health' },
+      { href: 'economics.html', text: 'Economics & Gating' },
       { href: 'theblock.html', text: 'Ledger & Gates' }
     ]},
     { label: 'Trade', items: [
@@ -133,7 +134,8 @@
           const value = cmd.value.trim().toLowerCase();
           const jump = {
             'dashboard': 'dashboard.html', 'overview': 'dashboard.html',
-            'ledger': 'theblock.html', 'gates': 'theblock.html',
+            'economics': 'economics.html', 'gates': 'economics.html', 'issuance': 'economics.html',
+            'ledger': 'theblock.html', 'block': 'theblock.html',
             'trade': 'trading.html', 'strategies': 'strategies.html',
             'whales': 'whales.html', 'sentiment': 'sentiment.html',
             'mev': 'mev.html', 'settings': 'settings.html'

@@ -4,42 +4,55 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Block Buster</title>
-    <link rel="stylesheet" href="css/tailwind.min.css?v=20260205">
-    <link rel="stylesheet" href="dashboard.css?v=20260205">
-    <script src="js/utils.js?v=20260205"></script>
+    <link rel="stylesheet" href="css/tailwind.min.css?v=20260212">
+    <link rel="stylesheet" href="dashboard.css?v=20260212">
+    <script src="js/utils.js?v=20260212"></script>
 </head>
 <body class="font-display min-h-screen relative">
     <div class="atmospheric-glow"></div>
     <main class="page-content flex items-center justify-center min-h-screen">
-        <div class="panel-blade p-6 max-w-md text-center space-y-2">
-            <div class="text-xs uppercase tracking-widest text-gray-400">Block Buster</div>
-            <div class="text-lg font-semibold">Routing to the right view…</div>
-            <div class="text-xs text-gray-500" id="landing-hint">Checking governor gates.</div>
+        <div class="panel-blade hologram-panel p-8 max-w-lg text-center space-y-4">
+            <div class="text-xs uppercase tracking-widest text-gray-400 mb-2">Block Buster</div>
+            <div class="text-2xl font-semibold mb-3">Network Health Dashboard</div>
+            <div class="text-sm text-gray-400 mb-4" id="landing-hint">Preparing network health view…</div>
+            <div class="flex flex-col gap-3 mt-6">
+                <a href="network.html" class="px-6 py-3 bg-block-purple/20 text-block-purple rounded-lg hover:bg-block-purple/30 transition-colors font-semibold">
+                    Open Network Health
+                </a>
+                <a href="dashboard.html" class="px-6 py-3 bg-gray-700/30 text-gray-300 rounded-lg hover:bg-gray-700/50 transition-colors text-sm">
+                    Trading Dashboard
+                </a>
+            </div>
         </div>
     </main>
     <script>
-        (async function decideLanding() {
+        // Use centralized gate policy to show status (no auto-redirect)
+        (async function checkStatus() {
             const hint = document.getElementById('landing-hint');
-            const dash = 'dashboard.html';
-            const network = 'network.html';
-            const timeout = setTimeout(() => { window.location.href = dash; }, 3000);
+            const primaryBtn = document.querySelector('a[href="network.html"]');
+            
             try {
-                const { apiBase } = resolveApiConfig();
-                hint.textContent = `Checking ${apiBase}/theblock/gates …`;
-                const res = await fetch(`${apiBase}/theblock/gates`, { cache: 'no-store' });
-                clearTimeout(timeout);
-                if (res.ok) {
-                    const gates = await res.json();
-                    const open = Array.isArray(gates) && gates.length > 0 && gates.every(g => (g.state || '').toLowerCase() === 'trade');
-                    hint.textContent = open ? 'Markets are live. Opening dashboard.' : 'Markets are gated. Opening network health.';
-                    window.location.href = open ? dash : `${network}?gated=1`;
-                    return;
+                const gateStatus = await enforceGatePolicy({ 
+                    page: 'index', 
+                    allowOverrideParams: false 
+                });
+                
+                if (gateStatus.gated) {
+                    hint.textContent = `${gateStatus.closedGates.length}/${gateStatus.gates.length} markets gated. Start with Network Health.`;
+                } else if (gateStatus.gates.length > 0) {
+                    hint.textContent = 'All markets live. Choose your dashboard below.';
+                } else {
+                    hint.textContent = 'Network Health is the primary operational dashboard.';
                 }
-            } catch (_) {
-                clearTimeout(timeout);
+                
+                // Focus primary button (Network Health) for keyboard navigation
+                if (primaryBtn) {
+                    primaryBtn.focus();
+                }
+            } catch (err) {
+                console.warn('Failed to check gate status:', err);
+                hint.textContent = 'Choose your dashboard below.';
             }
-            hint.textContent = 'Falling back to dashboard.';
-            window.location.href = dash;
         })();
     </script>
 </body>

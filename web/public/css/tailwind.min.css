@@ -1,1 +1,30 @@
-Couldn't find the requested file /dist/tailwind.min.css in tailwindcss.
+/* Tailwind CSS - Generated placeholder */
+/* This file is a placeholder. For production, run: npx tailwindcss -i public/css/block-buster.css -o public/css/tailwind.min.css --minify */
+
+/* Reset */
+*,::before,::after{box-sizing:border-box;border-width:0;border-style:solid;border-color:#e5e7eb}
+::before,::after{--tw-content:''}
+html{line-height:1.5;-webkit-text-size-adjust:100%;-moz-tab-size:4;tab-size:4;font-family:ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,"Noto Sans",sans-serif,"Apple Color Emoji","Segoe UI Emoji","Segoe UI Symbol","Noto Color Emoji";font-feature-settings:normal;font-variation-settings:normal}
+body{margin:0;line-height:inherit}
+
+/* Minimal utilities used by legacy pages */
+.bg-gray-900{background-color:rgb(17 24 39)}
+.text-white{color:rgb(255 255 255)}
+.p-4{padding:1rem}
+.m-4{margin:1rem}
+.flex{display:flex}
+.grid{display:grid}
+.hidden{display:none}
+.items-center{align-items:center}
+.justify-between{justify-content:space-between}
+.gap-4{gap:1rem}
+.rounded{border-radius:0.25rem}
+.border{border-width:1px}
+.border-gray-700{border-color:rgb(55 65 81)}
+.font-bold{font-weight:700}
+.text-lg{font-size:1.125rem;line-height:1.75rem}
+.text-sm{font-size:0.875rem;line-height:1.25rem}
+.shadow{box-shadow:0 1px 3px 0 rgb(0 0 0 / 0.1),0 1px 2px -1px rgb(0 0 0 / 0.1)}
+.transition{transition-property:color,background-color,border-color,text-decoration-color,fill,stroke,opacity,box-shadow,transform,filter,backdrop-filter;transition-timing-function:cubic-bezier(0.4,0,0.2,1);transition-duration:150ms}
+
+/* Note: For full Tailwind features, use block-buster.css instead */

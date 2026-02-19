@@ -1,0 +1,756 @@
+/**
+ * Modern UX Styles - Block-Buster Dashboard
+ * Replacing outdated checkbox-based selection with modern interactions
+ * Adding chart visualizations, filter UI, and enhanced market dashboards
+ */
+
+/* ============================================================================
+   SELECTION SYSTEM (No Checkboxes)
+   ============================================================================ */
+
+/* Row selection states */
+.data-table tbody tr {
+  cursor: pointer;
+  transition: all 0.15s ease;
+  position: relative;
+  border-left: 3px solid transparent;
+}
+
+.data-table tbody tr:focus {
+  outline: none;
+  background: var(--surface-1);
+}
+
+.data-table tbody tr.row-hover {
+  background: var(--surface-0-5);
+}
+
+.data-table tbody tr.row-selected {
+  background: rgba(26, 198, 162, 0.08);
+  border-left-color: var(--accent);
+}
+
+.data-table tbody tr.row-selected:hover {
+  background: rgba(26, 198, 162, 0.12);
+}
+
+/* Hide checkboxes (deprecated pattern) */
+.data-table input[type="checkbox"] {
+  display: none !important;
+}
+
+.col-select {
+  display: none !important;
+}
+
+/* Selection action bar (floating) */
+.selection-action-bar {
+  position: sticky;
+  top: 60px;
+  z-index: 100;
+  background: var(--surface-2);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 12px 16px;
+  margin-bottom: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  animation: slideDown 0.2s ease;
+}
+
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.selection-info {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.selection-count {
+  font-weight: 600;
+  color: var(--accent);
+  font-size: 14px;
+}
+
+.selection-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.selection-actions .btn {
+  min-width: auto;
+}
+
+/* ============================================================================
+   FILTER BUILDER
+   ============================================================================ */
+
+.filter-builder {
+  margin-bottom: 24px;
+}
+
+.filter-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 12px;
+  background: var(--surface-1);
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+}
+
+.filter-chips {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  flex: 1;
+}
+
+.filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--border-color);
+  border-radius: 16px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.filter-chip:hover {
+  background: var(--surface-3);
+  border-color: var(--accent);
+}
+
+.filter-chip-content {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.filter-chip-label {
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.filter-chip-operator {
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.filter-chip-value {
+  color: var(--text-primary);
+}
+
+.filter-chip-remove {
+  background: none;
+  border: none;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  font-size: 18px;
+  line-height: 1;
+  padding: 0;
+  width: 16px;
+  height: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  transition: all 0.2s;
+}
+
+.filter-chip-remove:hover {
+  background: var(--danger);
+  color: white;
+}
+
+.filter-actions {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+}
+
+/* Filter dropdown */
+.filter-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  width: 400px;
+  max-width: 100%;
+  background: var(--surface-2);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+  z-index: 1000;
+  margin-top: 8px;
+  animation: fadeIn 0.2s ease;
+}
+
+.filter-dropdown.hidden {
+  display: none;
+}
+
+.filter-dropdown-header {
+  padding: 16px;
+  border-bottom: 1px solid var(--border-color);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.filter-dropdown-header h4 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.filter-dropdown-body {
+  padding: 12px;
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.filter-search {
+  width: 100%;
+  padding: 8px 12px;
+  background: var(--surface-1);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  color: var(--text-primary);
+  font-size: 14px;
+  margin-bottom: 12px;
+}
+
+.filter-search:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.filter-options {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.filter-option {
+  padding: 10px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  transition: background 0.15s;
+}
+
+.filter-option:hover {
+  background: var(--surface-3);
+}
+
+.filter-option.hidden {
+  display: none;
+}
+
+.filter-option-label {
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.filter-option-type {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+/* Filter editor */
+.filter-editor {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  background: var(--surface-2);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 12px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+  z-index: 100;
+  min-width: 300px;
+  animation: fadeIn 0.2s ease;
+}
+
+.filter-editor-content {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.filter-operator {
+  padding: 8px;
+  background: var(--surface-1);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  color: var(--text-primary);
+  font-size: 14px;
+}
+
+.filter-value {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.filter-input {
+  flex: 1;
+  padding: 8px;
+  background: var(--surface-1);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  color: var(--text-primary);
+  font-size: 14px;
+}
+
+.filter-input-small {
+  max-width: 120px;
+}
+
+.filter-separator {
+  color: var(--text-tertiary);
+  font-size: 13px;
+}
+
+.filter-editor-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+/* ============================================================================
+   CHARTS
+   ============================================================================ */
+
+.chart-container {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+.chart-container canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* Chart loading state */
+.chart-container.loading::after {
+  content: "Loading chart...";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  color: var(--text-tertiary);
+  font-size: 14px;
+}
+
+/* Chart toolbar */
+.chart-toolbar {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  gap: 4px;
+  background: rgba(0, 0, 0, 0.6);
+  padding: 4px;
+  border-radius: 6px;
+  backdrop-filter: blur(8px);
+}
+
+.chart-toolbar-btn {
+  background: none;
+  border: none;
+  color: white;
+  cursor: pointer;
+  padding: 6px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  transition: background 0.2s;
+}
+
+.chart-toolbar-btn:hover {
+  background: rgba(255, 255, 255, 0.15);
+}
+
+/* ============================================================================
+   ENHANCED MARKET DASHBOARDS
+   ============================================================================ */
+
+/* Provider cards */
+.providers-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 16px;
+  margin-top: 16px;
+}
+
+.provider-card {
+  background: var(--surface-1);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 16px;
+  transition: all 0.2s;
+  cursor: pointer;
+}
+
+.provider-card:hover {
+  border-color: var(--accent);
+  box-shadow: 0 4px 12px rgba(26, 198, 162, 0.15);
+  transform: translateY(-2px);
+}
+
+.provider-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.provider-card-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  font-family: 'Courier New', monospace;
+}
+
+.provider-card-status {
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.provider-card-metrics {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+}
+
+.provider-metric {
+  display: flex;
+  flex-direction: column;
+}
+
+.provider-metric-label {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 4px;
+}
+
+.provider-metric-value {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+/* Dispute cards */
+.disputes-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.dispute-card {
+  background: var(--surface-1);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 16px;
+  border-left: 4px solid var(--warn);
+}
+
+.dispute-card.resolved {
+  border-left-color: var(--success);
+  opacity: 0.7;
+}
+
+.dispute-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.dispute-header h4 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.dispute-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.dispute-field {
+  display: flex;
+  gap: 8px;
+  font-size: 14px;
+}
+
+.dispute-field .label {
+  font-weight: 600;
+  color: var(--text-secondary);
+  min-width: 100px;
+}
+
+.dispute-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+/* Energy market specific */
+.energy-overview {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.energy-providers-view,
+.energy-readings-view,
+.energy-disputes-view,
+.energy-analytics-view,
+.energy-slashes-view {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* Detail views */
+.provider-details {
+  padding: 16px 0;
+}
+
+.detail-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 16px;
+}
+
+.detail-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.detail-label {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.detail-value {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+/* ============================================================================
+   CODE DISPLAY
+   ============================================================================ */
+
+.code-inline {
+  background: var(--surface-2);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-family: 'Courier New', monospace;
+  font-size: 13px;
+  color: var(--accent);
+  border: 1px solid var(--border-color);
+}
+
+.code-block {
+  display: block;
+  background: var(--surface-2);
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-family: 'Courier New', monospace;
+  font-size: 12px;
+  color: var(--text-primary);
+  border: 1px solid var(--border-color);
+  overflow-x: auto;
+  word-break: break-all;
+}
+
+/* ============================================================================
+   FORM ENHANCEMENTS
+   ============================================================================ */
+
+.form-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 16px;
+}
+
+.form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.form-group label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.form-group input,
+.form-group select,
+.form-group textarea {
+  padding: 10px 12px;
+  background: var(--surface-1);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  color: var(--text-primary);
+  font-size: 14px;
+  font-family: inherit;
+  transition: border-color 0.2s;
+}
+
+.form-group input:focus,
+.form-group select:focus,
+.form-group textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.form-hint {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  margin-top: 4px;
+}
+
+/* ============================================================================
+   RESPONSIVE UTILITIES
+   ============================================================================ */
+
+.grid-2 {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+  gap: 16px;
+}
+
+.grid-3 {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 16px;
+}
+
+@media (max-width: 768px) {
+  .grid-2,
+  .grid-3 {
+    grid-template-columns: 1fr;
+  }
+
+  .filter-bar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .filter-actions {
+    margin-left: 0;
+    width: 100%;
+  }
+
+  .selection-action-bar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .selection-actions {
+    width: 100%;
+  }
+
+  .filter-dropdown {
+    width: calc(100vw - 32px);
+  }
+}
+
+/* ============================================================================
+   ANIMATIONS
+   ============================================================================ */
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* ============================================================================
+   DARK MODE OPTIMIZATIONS
+   ============================================================================ */
+
+@media (prefers-color-scheme: dark) {
+  .filter-chip {
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+  }
+
+  .chart-container canvas {
+    filter: brightness(0.95);
+  }
+
+  .provider-card:hover {
+    box-shadow: 0 4px 16px rgba(26, 198, 162, 0.2);
+  }
+}
+
+/* ============================================================================
+   ACCESSIBILITY
+   ============================================================================ */
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* Focus visible polyfill */
+.data-table tbody tr:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.filter-chip:focus-visible,
+.provider-card:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
