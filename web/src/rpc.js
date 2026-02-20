@@ -282,7 +282,20 @@ class RpcClient {
    * @returns {Promise<TPSResponse>}
    */
   async getTPS() {
-    return this.call('consensus.tps');
+    try {
+      const stats = await this.call('consensus.stats');
+      const avgMs =
+        stats?.avg_block_time_ms ??
+        (typeof stats?.avgBlockTime === 'number' ? stats.avgBlockTime * 1000 : 0);
+      return {
+        tps: stats?.tps ?? 0,
+        avgBlockTime: avgMs / 1000,
+      };
+    } catch {
+      // Legacy fallback for older nodes/tests
+      const tps = await this.call('consensus.tps');
+      return { tps: tps?.tps ?? 0, avgBlockTime: tps?.avgBlockTime ?? 0 };
+    }
   }
 
   /**
@@ -299,7 +312,11 @@ class RpcClient {
    * @returns {Promise<ValidatorsResponse>}
    */
   async getValidators() {
-    return this.call('consensus.validators');
+    try {
+      return await this.call('consensus.validators');
+    } catch {
+      return { validators: [] };
+    }
   }
 
   // ========== Ledger Namespace ==========
@@ -310,7 +327,21 @@ class RpcClient {
    * @returns {Promise<BalanceResponse>}
    */
   async getBalance(account) {
-    return this.call('ledger.balance', [account]);
+    try {
+      const res = await this.call('balance', [{ address: account }]);
+      return {
+        account,
+        balance: res?.amount ?? res?.balance ?? 0,
+        nonce: res?.nonce ?? 0,
+      };
+    } catch {
+      const res = await this.call('ledger.balance', [account]);
+      return {
+        account,
+        balance: res?.balance ?? res?.amount ?? 0,
+        nonce: res?.nonce ?? 0,
+      };
+    }
   }
 
   /**
@@ -319,7 +350,17 @@ class RpcClient {
    * @returns {Promise<TransactionsResponse>}
    */
   async getTransactions(params = {}) {
-    return this.call('ledger.transactions', [params]);
+    try {
+      return this.call('ledger.transactions', [params]);
+    } catch {
+      return {
+        transactions: [],
+        total: 0,
+        limit: params.limit || 0,
+        offset: params.offset || 0,
+        unsupported: true,
+      };
+    }
   }
 
   // ========== Peer Namespace ==========
@@ -329,7 +370,22 @@ class RpcClient {
    * @returns {Promise<PeerListResponse>}
    */
   async listPeers() {
-    return this.call('peer.list');
+    try {
+      const peers = await this.call('net.peer_stats_all', [{ offset: 0, limit: 100 }]);
+      const arr = Array.isArray(peers) ? peers : peers?.peers || [];
+      return {
+        peers: arr.map((p) => ({
+          id: p.peer_id || p.id,
+          address: p.peer_id || p.id,
+          latency: p.metrics?.avg_latency_ms || 0,
+          uptime: p.metrics?.last_updated || 0,
+          version: p.metrics?.version || 'n/a',
+          metrics: p.metrics,
+        })),
+      };
+    } catch {
+      return this.call('peer.list');
+    }
   }
 
   /**
@@ -337,7 +393,20 @@ class RpcClient {
    * @returns {Promise<PeerStatsResponse>}
    */
   async getPeerStats() {
-    return this.call('peer.stats');
+    try {
+      const overlay = await this.call('net.overlay_status');
+      const peers = await this.call('net.peer_stats_all', [{ offset: 0, limit: 100 }]);
+      const len = Array.isArray(peers) ? peers.length : peers?.length || peers?.total || 0;
+      return {
+        total: overlay?.persisted_peers ?? overlay?.total ?? len,
+        active: overlay?.active_peers ?? overlay?.active ?? peers?.active ?? len,
+        avgLatency: peers?.avgLatency ?? overlay?.avgLatency ?? 0,
+        bandwidth: {},
+        peers,
+      };
+    } catch {
+      return this.call('peer.stats');
+    }
   }
 
   // ========== Scheduler Namespace ==========
@@ -347,7 +416,11 @@ class RpcClient {
    * @returns {Promise<SchedulerStatsResponse>}
    */
   async getSchedulerStats() {
-    return this.call('scheduler.stats');
+    try {
+      return this.call('compute_market.scheduler_stats');
+    } catch {
+      return this.call('scheduler.stats');
+    }
   }
 
   // ========== Governance Namespace ==========
@@ -371,13 +444,21 @@ class RpcClient {
   }
 
   async listEnergyProviders(params = {}) {
-    return this.call('energy.providers', [params]);
+    try {
+      return this.call('energy.providers', [params]);
+    } catch {
+      return { providers: [] };
+    }
   }
 
   // ========== Compute Market Namespace ==========
 
   async getComputeJobs(params = {}) {
-    return this.call('compute_market.jobs', [params]);
+    try {
+      return this.call('compute_market.jobs', [params]);
+    } catch {
+      return this.call('compute_market.stats', [params]);
+    }
   }
 
   async getCourierStatus(params = {}) {
@@ -442,31 +523,50 @@ class RpcClient {
   async getDashboardMetrics() {
     const calls = [
       { method: 'consensus.block_height' },
-      { method: 'consensus.tps' },
-      { method: 'peer.stats' },
-      { method: 'scheduler.stats' },
+      { method: 'consensus.finality_status' },
+      { method: 'consensus.stats' },
+      { method: 'net.overlay_status' },
+      { method: 'net.peer_stats_all', params: [{ offset: 0, limit: 50 }] },
+      { method: 'compute_market.scheduler_stats' },
       { method: 'governor.status' },
-      { method: 'consensus.validators' },
       { method: 'analytics', params: [{}] },
     ];
 
     const results = await this.batch(calls);
 
-    // Transform batch results into structured object
-    const [blockHeight, tps, peerStats, schedulerStats, governorStatus, validators, analytics] = results;
+    const [
+      blockHeight = {},
+      finality = {},
+      stats = {},
+      overlay = {},
+      peerStatsAll = {},
+      schedulerStats = {},
+      governorStatus = {},
+      analytics = {},
+    ] = results;
+
+    const statsRes = stats.result || {};
+    const overlayRes = overlay.result || {};
+    const peersRes = peerStatsAll.result;
+    const peerTotal =
+      overlayRes.persisted_peers ?? overlayRes.total ?? (Array.isArray(peersRes) ? peersRes.length : 0);
+    const peerActive =
+      overlayRes.active_peers ?? overlayRes.active ?? (Array.isArray(peersRes) ? peersRes.length : 0);
 
     return {
       blockHeight: blockHeight.result?.height || 0,
-      finalizedHeight: blockHeight.result?.finalized_height || 0,
-      tps: tps.result?.tps || 0,
-      avgBlockTime: tps.result?.avgBlockTime || 0,
-      peers: peerStats.result?.total || 0,
-      activePeers: peerStats.result?.active || 0,
-      avgLatency: peerStats.result?.avgLatency || 0,
+      finalizedHeight: finality.result?.finalized_height || blockHeight.result?.height || 0,
+      tps: statsRes.tps || 0,
+      avgBlockTime:
+        (statsRes.avg_block_time_ms ??
+          (typeof statsRes.avgBlockTime === 'number' ? statsRes.avgBlockTime * 1000 : 0)) / 1000,
+      peers: peerTotal,
+      activePeers: peerActive,
+      avgLatency: 0,
       schedulerQueueSize: schedulerStats.result?.queue_size || 0,
       governorActiveGates: governorStatus.result?.active_gates || 0,
-      validatorCount: validators.result?.validators?.length || 0,
-      analytics: analytics.result || {},
+      validatorCount: 0,
+      analytics: analytics?.result || {},
       errors: results.filter((r) => r.error).map((r) => r.error),
     };
   }
@@ -477,18 +577,38 @@ class RpcClient {
    */
   async getNetworkOverview() {
     const calls = [
-      { method: 'peer.list' },
-      { method: 'peer.stats' },
-      { method: 'consensus.validators' },
+      { method: 'net.peer_stats_all', params: [{ offset: 0, limit: 50 }] },
+      { method: 'net.overlay_status' },
+      { method: 'consensus.block_height' },
+      { method: 'consensus.finality_status' },
+      { method: 'consensus.stats' },
     ];
 
     const results = await this.batch(calls);
-    const [peers, stats, validators] = results;
+    const [peers, overlay, blockHeight, finality, stats] = results;
+    const peerList = (Array.isArray(peers.result) ? peers.result : peers.result?.peers || []).map((p) => ({
+      ...p,
+      id: p.peer_id || p.id,
+    }));
+    const statsRes = stats.result || {};
+    const overlayRes = overlay.result || {};
+    const totalPeers = overlayRes.persisted_peers ?? overlayRes.total ?? peerList.length;
+    const activePeers = overlayRes.active_peers ?? overlayRes.active ?? peerList.length;
 
     return {
-      peers: peers.result?.peers || [],
-      stats: stats.result || {},
-      validators: validators.result?.validators || [],
+      peers: peerList,
+      stats: {
+        total: totalPeers,
+        active: activePeers,
+        avgLatency: 0,
+        blockHeight: blockHeight.result?.height || 0,
+        finalizedHeight: finality.result?.finalized_height || blockHeight.result?.height || 0,
+        tps: statsRes.tps || 0,
+        avgBlockTime:
+          (statsRes.avg_block_time_ms ??
+            (typeof statsRes.avgBlockTime === 'number' ? statsRes.avgBlockTime * 1000 : 0)) / 1000,
+      },
+      validators: [],
       errors: results.filter((r) => r.error).map((r) => r.error),
     };
   }
@@ -500,22 +620,25 @@ class RpcClient {
   async getMarketStates() {
     const calls = [
       { method: 'energy.market_state', params: [{}] },
-      { method: 'compute_market.jobs', params: [{}] },
+      { method: 'compute_market.stats', params: [{}] },
       { method: 'ad_market.broker_state', params: [{}] },
       { method: 'ad_market.inventory', params: [{}] },
     ];
 
     const results = await this.batch(calls);
-    const [energy, computeJobs, adBroker, adInventory] = results;
+    const [energy, computeStats, adBroker, adInventory] = results;
 
     return {
-      energy: energy.result || {},
+      energy: { ...(energy.result || {}), healthy: Boolean(energy.result) },
       compute: {
-        jobs: computeJobs.result || {},
+        stats: computeStats.result || {},
+        jobs: { active_jobs: computeStats.result?.active_jobs ?? computeStats.result?.pending ?? 0 },
+        healthy: Boolean(computeStats.result),
       },
       ad: {
         broker: adBroker.result || {},
         inventory: adInventory.result || {},
+        healthy: Boolean(adBroker.result || adInventory.result),
       },
       errors: results.filter((r) => r.error).map((r) => r.error),
     };

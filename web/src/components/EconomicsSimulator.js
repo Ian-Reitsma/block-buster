@@ -12,6 +12,7 @@
 import { Component } from '../lifecycle.js';
 import { $, fmt, clamp } from '../utils.js';
 import mockDataManager from '../mock-data-manager.js';
+import features from '../features.js';
 
 class EconomicsSimulator extends Component {
   constructor(rpc) {
@@ -65,6 +66,7 @@ class EconomicsSimulator extends Component {
               <button class="btn btn-sm" data-scenario="growth">Growth</button>
               <button class="btn btn-sm" data-scenario="mainnet">Mainnet</button>
               <button class="btn btn-sm" data-scenario="stress">Stress</button>
+              <span class="pill pill-muted" id="econlab-sim-badge" style="display:none;">Simulated</span>
             </div>
           </header>
 
@@ -182,6 +184,11 @@ class EconomicsSimulator extends Component {
     this.bindControls();
     await this.loadBaseline();
     this.updateOutputs();
+
+    const badge = document.getElementById('econlab-sim-badge');
+    if (badge) {
+      badge.style.display = mockDataManager.isMockMode() ? 'inline-flex' : 'none';
+    }
   }
 
   bindControls() {
@@ -290,14 +297,22 @@ class EconomicsSimulator extends Component {
   }
 
   async syncFromLive() {
+    const useLive = features.isEnabled('economics_live');
+    if (!useLive) {
+      console.warn('[EconomicsSimulator] economics_live flag disabled - using simulated baseline');
+      this.syncFromMock();
+      return;
+    }
     try {
       const economics = await this.rpc.call('economics.replay', { to_height: 'tip' });
       const live = this.transformLive(economics);
       this.inputs = { ...this.inputs, ...live };
       this.refreshSliders();
       this.updateOutputs();
+      const badge = document.getElementById('econlab-sim-badge');
+      if (badge) badge.style.display = 'none';
     } catch (err) {
-      console.warn('[EconomicsSimulator] Live sync failed, falling back to mock:', err?.message);
+      console.warn('[EconomicsSimulator] Live economics RPC failed, falling back to mock:', err?.message);
       this.syncFromMock();
     }
   }

@@ -13,7 +13,7 @@
  */
 
 import { Component } from '../lifecycle.js';
-import { $, fmt } from '../utils.js';
+import { $ } from '../utils.js';
 
 class FilterBuilder extends Component {
   constructor(options) {
@@ -233,8 +233,8 @@ class FilterBuilder extends Component {
 
     const operatorSelect = $(`#filter-operator-${filter.id}`);
     if (operatorSelect) {
-      this.listen(operatorSelect, 'change', (e) => {
-        filter.operator = e.target.value;
+      this.listen(operatorSelect, 'change', (event) => {
+        filter.operator = event.target.value;
         // Re-render value input if operator changes
         const valueContainer = $(`#filter-value-${filter.id}`);
         if (valueContainer) {
@@ -281,17 +281,17 @@ class FilterBuilder extends Component {
   applyFilterEdit(filter) {
     const input = $(`#filter-input-${filter.id}`);
     
-    if (filter.operator === 'between') {
-      const minInput = $(`#filter-input-min-${filter.id}`);
-      const maxInput = $(`#filter-input-max-${filter.id}`);
-      if (minInput && maxInput) {
-        filter.value = [minInput.value, maxInput.value];
-      }
-    } else if (filter.type === 'date' && filter.operator === 'between') {
+    if (filter.type === 'date' && filter.operator === 'between') {
       const startInput = $(`#filter-input-start-${filter.id}`);
       const endInput = $(`#filter-input-end-${filter.id}`);
       if (startInput && endInput) {
         filter.value = [startInput.value, endInput.value];
+      }
+    } else if (filter.operator === 'between') {
+      const minInput = $(`#filter-input-min-${filter.id}`);
+      const maxInput = $(`#filter-input-max-${filter.id}`);
+      if (minInput && maxInput) {
+        filter.value = [minInput.value, maxInput.value];
       }
     } else if (input) {
       filter.value = input.value;
@@ -464,7 +464,7 @@ class FilterBuilder extends Component {
     try {
       const saved = localStorage.getItem('filter-presets');
       return saved ? JSON.parse(saved) : {};
-    } catch (e) {
+    } catch {
       return {};
     }
   }

@@ -4,6 +4,7 @@
  */
 
 import features from './features.js';
+import mockDataManager from './mock-data-manager.js';
 
 /**
  * Generate deterministic but varying mock data based on time
@@ -14,6 +15,14 @@ class MockRpcClient {
     this.requestId = 1;
     this.startTime = Date.now();
     this.lastTps = null;
+    this.lastHeight = mockDataManager.currentBlock || 0;
+
+    // Force a single source of truth for mock data
+    if (mockDataManager.mode !== 'MOCK') {
+      mockDataManager.mode = 'MOCK';
+      mockDataManager.initializeMockData();
+      mockDataManager.startMockUpdates();
+    }
     
     console.log('[MockRPC] Using mock RPC client - backend not required');
     console.log('[MockRPC] Disable with: features.disable(\'mock_rpc\')');
@@ -30,8 +39,10 @@ class MockRpcClient {
    * Get mock block height (increments over time - realistic 2s block time)
    */
   getMockBlockHeight() {
-    const elapsed = Math.floor((Date.now() - this.startTime) / 2000);
-    return 567890 + elapsed; // Realistic starting height
+    const current = mockDataManager.currentBlock || 0;
+    const next = Math.max(current, this.lastHeight + 1);
+    this.lastHeight = next;
+    return next;
   }
 
   /**
@@ -44,33 +55,23 @@ class MockRpcClient {
    * - Fees: 2-15 BLOCK per block
    */
   getMockMetrics() {
-    const time = Date.now();
-    const cycle = Math.sin(time / 30000); // 30s cycle for variance
-    const spike = Math.random() > 0.95; // 5% chance of spike
-
-    // Base TPS with bounded jitter; clamp delta vs previous to avoid wild swings that fail tests
-    const targetTps = spike
-      ? Math.floor(1800 + Math.random() * 300)
-      : Math.floor(900 + cycle * 250 + (Math.random() - 0.5) * 200);
-    let tps = targetTps;
-    if (this.lastTps !== null) {
-      const delta = tps - this.lastTps;
-      const maxDelta = 400;
-      if (Math.abs(delta) > maxDelta) {
-        tps = this.lastTps + Math.sign(delta) * maxDelta;
-      }
-    }
-    tps = Math.max(800, tps);
+    const tpsHistory = mockDataManager.get('tpsHistory') || [];
+    const lastTps = tpsHistory.length ? tpsHistory[tpsHistory.length - 1].value : 1000;
+    // Keep legacy high-TPS feel while tying to mockDataManager state
+    const tps = Math.max(800, lastTps);
     this.lastTps = tps;
+
+    const feeHistory = mockDataManager.get('feeHistory') || [];
+    const lastFee = feeHistory.length ? feeHistory[feeHistory.length - 1].value : 25_000;
 
     return {
       tps,
-      avgLatency: Math.floor(15 + cycle * 15 + Math.random() * 15),
-      avgBlockTime: 2.0 + cycle * 0.2 + (Math.random() - 0.5) * 0.1,
-      activePeers: Math.floor(45 + cycle * 20 + Math.random() * 20),
-      fees: 2 + Math.random() * 13,
-      validators: 21, // Typical validator set size
-      totalSupply: 1_250_000 + Math.floor(time / 1000 / 3600) * 440, // Growing supply
+      avgLatency: 28,
+      avgBlockTime: 2.0,
+      activePeers: 58,
+      fees: lastFee / 1_000_000,
+      validators: 21,
+      totalSupply: mockDataManager.currentEmission || 0,
     };
   }
 
@@ -78,7 +79,37 @@ class MockRpcClient {
    * Get realistic market data
    */
   getMockMarketData() {
-    const utilization = 45 + Math.random() * 40; // 45-85% typical
+    // Prefer deterministic mockDataManager markets if present
+    if (mockDataManager.mockData) {
+      return {
+        compute: mockDataManager.mockData.computeMarket || {
+          utilization: 0.72,
+          providers: 12,
+          avgMargin: 0.12,
+          volume24h: 50000,
+        },
+        storage: mockDataManager.mockData.storageMarket || {
+          utilization: 0.6,
+          providers: 20,
+          avgMargin: 0.10,
+          volume24h: 30000,
+        },
+        energy: mockDataManager.mockData.energyMarket || {
+          utilization: 0.7,
+          providers: 12,
+          avgMargin: 0.18,
+          volume24h: 20000,
+        },
+        ad: mockDataManager.mockData.adQuality || {
+          utilization: 0.5,
+          providers: 8,
+          avgMargin: 0.2,
+          volume24h: 8000,
+        },
+      };
+    }
+
+    const utilization = 45 + Math.random() * 40; // fallback
     return {
       compute: {
         utilization: utilization,
@@ -173,12 +204,27 @@ class MockRpcClient {
         height: this.getMockBlockHeight(),
         finalized_height: this.getMockBlockHeight() - 5,
       }),
-      
+
       'consensus.tps': () => {
         const metrics = this.getMockMetrics();
         return {
           tps: metrics.tps,
           avgBlockTime: metrics.avgBlockTime,
+        };
+      },
+
+      'consensus.finality_status': () => ({
+        finalized_height: this.getMockBlockHeight() - 5,
+        finalized_hash: `0x${Math.random().toString(16).slice(2, 18)}`,
+        current_height: this.getMockBlockHeight(),
+        blocks_until_finality: 0,
+      }),
+      
+      'consensus.stats': () => {
+        const metrics = this.getMockMetrics();
+        return {
+          tps: metrics.tps,
+          avg_block_time_ms: metrics.avgBlockTime * 1000,
         };
       },
       
@@ -200,6 +246,10 @@ class MockRpcClient {
       }),
       
       // Ledger
+      balance: ([paramsObj = {}]) => ({
+        amount: 100_000 + (paramsObj.address ? paramsObj.address.length : 0),
+      }),
+      
       'ledger.balance': ([account]) => ({
         account: account || '0x0000',
         balance: Math.floor(10000 + Math.random() * 90000),
@@ -207,7 +257,7 @@ class MockRpcClient {
       }),
       
       'ledger.transactions': ([params = {}]) => ({
-        transactions: Array.from({ length: params.limit || 10 }, (_, i) => ({
+        transactions: Array.from({ length: params.limit || 5 }, (_, i) => ({
           hash: `0x${Math.random().toString(16).slice(2, 18)}`,
           from: `0x${Math.random().toString(16).slice(2, 10)}`,
           to: `0x${Math.random().toString(16).slice(2, 10)}`,
@@ -217,38 +267,85 @@ class MockRpcClient {
           status: 'confirmed',
         })),
         total: 1234,
-        limit: params.limit || 10,
+        limit: params.limit || 5,
         offset: params.offset || 0,
       }),
       
-      // Peer
+      // Peer / Net
+      'net.overlay_status': () => ({
+        backend: 'mock',
+        active_peers: 64,
+        persisted_peers: 64,
+        database_path: null,
+      }),
+
+      'net.peer_stats_all': ([args = {}]) => {
+        const peers = this.getMockPeers();
+        const offset = args.offset || 0;
+        const limit = args.limit || peers.length;
+        return peers.slice(offset, offset + limit).map((p) => ({
+          peer_id: p.id,
+          metrics: {
+            requests: 100 + Math.floor(Math.random() * 50),
+            bytes_sent: 1_000_000 + Math.floor(Math.random() * 250_000),
+            reputation: { score: 900 + Math.floor(Math.random() * 80) },
+            last_updated: Date.now(),
+            req_avg: 5.0,
+            byte_avg: 1024,
+            throttled_until: 0,
+            throttle_reason: null,
+            last_handshake_ms: Date.now() - 500,
+            backoff_level: 0,
+          },
+        }));
+      },
+
+      'net.peer_stats': ([paramsObj = {}]) => {
+        const peers = this.getMockPeers();
+        const found = peers.find((p) => p.id === paramsObj.peer_id) || peers[0];
+        return {
+          requests: 100,
+          bytes_sent: 1_000_000,
+          drops: {},
+          handshake_fail: {},
+          reputation: { score: 900 },
+          last_updated: Date.now(),
+          req_avg: 5.0,
+          byte_avg: 1024,
+          throttled_until: 0,
+          throttle_reason: null,
+          backoff_level: 0,
+        };
+      },
+
       'peer.list': () => ({
-        peers: Array.from({ length: 8 }, (_, i) => ({
-          id: `peer-${i + 1}`,
-          address: `192.168.1.${100 + i}:5001`,
-          latency: Math.floor(10 + Math.random() * 50),
-          uptime: Math.floor(3600 + Math.random() * 86400),
+        peers: this.getMockPeers().map((p) => ({
+          id: p.id,
+          address: p.address,
+          latency: p.latency,
+          uptime: p.uptime || 3600,
           version: '1.0.0',
         })),
       }),
-      
-      'peer.stats': () => {
-        const metrics = this.getMockMetrics();
-        return {
-          total: 64,
-          active: 58,
-          avgLatency: metrics.avgLatency,
-          bandwidth: {
-            inbound: Math.floor(1000000 + Math.random() * 500000),
-            outbound: Math.floor(800000 + Math.random() * 400000),
-          },
-        };
-      },
+
+      'peer.stats': () => ({
+        total: 64,
+        active: 58,
+        avgLatency: 22,
+        bandwidth: {
+          inbound: 1_000_000,
+          outbound: 800_000,
+        },
+      }),
       
       // Scheduler
+      'compute_market.scheduler_stats': () => ({
+        queue_size: 5,
+        active_jobs: 2,
+      }),
       'scheduler.stats': () => ({
-        queue_size: Math.floor(5 + Math.random() * 15),
-        active_jobs: Math.floor(Math.random() * 10),
+        queue_size: 5,
+        active_jobs: 2,
       }),
       
       // Governance
@@ -305,9 +402,17 @@ class MockRpcClient {
       }),
       
       // Compute Market
+      'compute_market.stats': () => ({
+        industrial_backlog: 3,
+        industrial_utilization: 0.72,
+        industrial_units_total: 1200,
+        active_jobs: 20,
+        pending: 3,
+      }),
+      
       'compute_market.state': () => ({
-        active_jobs: Math.floor(15 + Math.random() * 10),
-        total_capacity: Math.floor(1000 + Math.random() * 500),
+        active_jobs: 20,
+        total_capacity: 1500,
       }),
       
       'compute_market.jobs': () => ({
@@ -319,17 +424,30 @@ class MockRpcClient {
       }),
       
       // Ad Market
-      'ad_market.state': () => ({
-        total_bids: Math.floor(120 + Math.random() * 50),
-        active_campaigns: Math.floor(25 + Math.random() * 15),
+      'ad_market.inventory': () => ({
+        slots: 120,
+        filled: 96,
       }),
+
+      'ad_market.broker_state': () => mockDataManager.get('adQuality') || {},
       
+      'ad_market.state': () => ({
+        total_bids: 150,
+        active_campaigns: 12,
+      }),
+
       'ad_market.bids': () => ({
         bids: Array.from({ length: 5 }, (_, i) => ({
           id: `bid-${i + 1}`,
           amount: Math.floor(100 + Math.random() * 900),
           status: ['active', 'pending', 'won'][i % 3],
         })),
+      }),
+
+      'ad_market.readiness': () => ({
+        ready: true,
+        pending: 0,
+        backlog: 0,
       }),
       
       // Treasury
@@ -352,10 +470,10 @@ class MockRpcClient {
       }),
       
       // Analytics
-      'analytics': () => ({
-        daily_transactions: Math.floor(50000 + Math.random() * 20000),
-        daily_volume: Math.floor(1000000 + Math.random() * 500000),
-        active_accounts: Math.floor(5000 + Math.random() * 2000),
+      analytics: () => ({
+        daily_transactions: mockDataManager.get('tpsHistory')?.slice(-1)[0]?.value || 0,
+        daily_volume: mockDataManager.get('priceHistory')?.slice(-1)[0]?.value || 0,
+        active_accounts: 5000,
       }),
     };
 
@@ -374,7 +492,8 @@ class MockRpcClient {
   }
 
   async getTPS() {
-    return this.call('consensus.tps');
+    const stats = await this.call('consensus.stats');
+    return { tps: stats.tps, avgBlockTime: stats.avg_block_time_ms / 1000 };
   }
 
   async getBlock(height) {
@@ -386,7 +505,8 @@ class MockRpcClient {
   }
 
   async getBalance(account) {
-    return this.call('ledger.balance', [account]);
+    const res = await this.call('ledger.balance', [account]);
+    return { account, balance: res.balance ?? res.amount ?? 0, nonce: res.nonce ?? 0 };
   }
 
   async getTransactions(params = {}) {
@@ -394,7 +514,8 @@ class MockRpcClient {
   }
 
   async listPeers() {
-    return this.call('peer.list');
+    const peers = await this.call('peer.list');
+    return peers;
   }
 
   async getPeerStats() {
@@ -504,10 +625,10 @@ class MockRpcClient {
     const markets = this.getMockMarketData();
     
     return {
-      energy: markets.energy,
-      compute: markets.compute,
-      storage: markets.storage,
-      ad: markets.ad,
+      energy: { ...markets.energy, healthy: true },
+      compute: { ...markets.compute, healthy: true },
+      storage: { ...markets.storage, healthy: true },
+      ad: { ...markets.ad, healthy: true },
       errors: [],
     };
   }

@@ -13,31 +13,34 @@
 import { Component } from '../lifecycle.js';
 import { fmt, $ } from '../utils.js';
 import mockDataManager from '../mock-data-manager.js';
+import features from '../features.js';
 
 class EconomicControlLaws extends Component {
   constructor(rpc) {
     super('EconomicControlLaws');
     this.rpc = rpc;
     this.data = null;
+    this.simulated = true;
   }
 
   async fetchData() {
-    try {
-      if (mockDataManager.isLiveMode()) {
+    const useLive = features.isEnabled('economics_live');
+    if (useLive) {
+      try {
         const [economics, subsidies, multipliers, adSplits] = await Promise.all([
           this.rpc.call('economics.replay', { to_height: 'tip' }),
           this.rpc.call('economics.subsidy_allocation', {}),
           this.rpc.call('economics.market_multipliers', {}),
           this.rpc.call('ad_market.policy_snapshot', {}),
         ]);
+        this.simulated = false;
         return this.transformLiveData({ economics, subsidies, multipliers, adSplits });
-      } else {
-        return mockDataManager.mockEconomicControlLaws();
+      } catch (error) {
+        console.warn('[EconomicControlLaws] Live economics RPC failed, falling back to simulated:', error?.message);
       }
-    } catch (error) {
-      console.error('[EconomicControlLaws] Failed to fetch:', error);
-      return mockDataManager.mockEconomicControlLaws();
     }
+    this.simulated = true;
+    return mockDataManager.mockEconomicControlLaws();
   }
 
   transformLiveData(data) {
@@ -104,6 +107,7 @@ class EconomicControlLaws extends Component {
       <div class="epoch-counter">
         <span class="epoch-label">Current Epoch:</span>
         <span class="epoch-value" id="current-epoch">--</span>
+        <span class="pill pill-muted" id="econ-sim-badge" style="margin-left: var(--space-2); display:none;">Simulated</span>
       </div>
     `;
     container.appendChild(header);
@@ -153,6 +157,10 @@ class EconomicControlLaws extends Component {
   async onMount() {
     // Fetch initial data
     this.data = await this.fetchData();
+    const badge = $('#econ-sim-badge');
+    if (badge) {
+      badge.style.display = this.simulated ? 'inline-flex' : 'none';
+    }
     
     // Render all layers
     this.renderOverallHealth();
@@ -210,6 +218,13 @@ class EconomicControlLaws extends Component {
         </div>
       </div>
     `;
+
+    if (this.data.simulated) {
+      const badge = document.createElement('div');
+      badge.className = 'muted tiny';
+      badge.textContent = 'Simulated economics (node does not expose economics.* RPC)';
+      container.appendChild(badge);
+    }
   }
 
   calculateOverallHealth() {

@@ -190,18 +190,15 @@
         conn.classList.remove('warn','bad'); conn.classList.add('ok');
         offline?.classList.add('hidden');
       } catch (err) {
-        // fallback HEAD
-        try {
-          await fetch(api, { method: 'HEAD', cache: 'no-store', mode: 'no-cors' });
-        } catch (_) {}
+        // fallback: mark simulated but keep UI usable
         indicator?.classList.remove('bg-block-green');
-        indicator?.classList.add('bg-red-500');
-        label.textContent = 'Offline';
+        indicator?.classList.add('bg-yellow-500');
+        label.textContent = 'Simulated';
         lagChip.textContent = 'lag —';
         errChip.textContent = 'errs —';
-        conn.textContent = 'Link Down';
-        conn.classList.remove('ok'); conn.classList.add('warn');
-        offline?.classList.remove('hidden');
+        conn.textContent = 'Simulated';
+        conn.classList.remove('ok','bad'); conn.classList.add('warn');
+        offline?.classList.add('hidden');
       }
     }
     probe();

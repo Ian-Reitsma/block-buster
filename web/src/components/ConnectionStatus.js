@@ -10,8 +10,6 @@ class ConnectionStatus extends Component {
     super('ConnectionStatus');
     this.container = null;
     this.status = 'connecting'; // 'connected' | 'connecting' | 'disconnected'
-    this.lastUpdate = null;
-    this.updateInterval = null;
   }
 
   onMount() {
@@ -30,28 +28,35 @@ class ConnectionStatus extends Component {
 
     this.render();
 
-    // Subscribe to connection state changes
-    this.subscribe(appState, 'wsConnected', (connected) => {
-      this.setStatus(connected ? 'connected' : 'disconnected');
-    });
-
-    this.subscribe(appState, 'offline', (offline) => {
-      if (offline) {
-        this.setStatus('disconnected');
+    // Subscribe to WebSocket state
+    this.subscribe(appState, 'ws', (wsState) => {
+      if (appState.get('offline')) return;
+      if (wsState?.connected) {
+        this.setStatus('connected');
+      } else {
+        this.setStatus('connecting');
       }
     });
 
-    // Subscribe to metrics updates to know we're receiving data
-    this.subscribe(appState, 'metrics', () => {
-      this.lastUpdate = Date.now();
-      if (this.status !== 'connected') {
+    // Subscribe to offline flag
+    this.subscribe(appState, 'offline', (offline) => {
+      this.setStatus(offline ? 'disconnected' : 'connected');
+    });
+
+    // Connection mode (LIVE/MOCK) should still read as connected
+    this.subscribe(appState, 'connectionMode', (mode) => {
+      if (mode === 'LIVE' || mode === 'MOCK') {
         this.setStatus('connected');
       }
-      this.updateTimeDisplay();
     });
 
-    // Check connection health every second
-    this.updateInterval = this.interval(() => this.checkConnectionHealth(), 1000);
+    // Metrics updates also imply connectivity
+    this.subscribe(appState, 'metrics', () => {
+      this.setStatus('connected');
+    });
+
+    // Initial status based on already-known state
+    this.updateFromState();
   }
 
   setStatus(newStatus) {
@@ -61,38 +66,24 @@ class ConnectionStatus extends Component {
     this.render();
   }
 
-  checkConnectionHealth() {
-    if (!this.lastUpdate) return;
+  updateFromState() {
+    const offline = appState.get('offline');
+    const wsState = appState.get('ws');
+    const mode = appState.get('connectionMode');
 
-    const now = Date.now();
-    const timeSinceUpdate = now - this.lastUpdate;
-
-    // If no update for 30 seconds, mark as disconnected
-    if (timeSinceUpdate > 30000 && this.status === 'connected') {
+    if (offline) {
       this.setStatus('disconnected');
+      return;
     }
-
-    // Update time display
-    this.updateTimeDisplay();
-  }
-
-  updateTimeDisplay() {
-    const timeEl = this.container?.querySelector('.connection-status-time');
-    if (!timeEl || !this.lastUpdate) return;
-
-    const now = Date.now();
-    const timeSinceUpdate = now - this.lastUpdate;
-
-    let timeText = '';
-    if (timeSinceUpdate < 1000) {
-      timeText = 'just now';
-    } else if (timeSinceUpdate < 60000) {
-      timeText = `${Math.floor(timeSinceUpdate / 1000)}s ago`;
-    } else {
-      timeText = `${Math.floor(timeSinceUpdate / 60000)}m ago`;
+    if (wsState?.connected) {
+      this.setStatus('connected');
+      return;
     }
-
-    timeEl.textContent = timeText;
+    if (mode === 'LIVE' || mode === 'MOCK') {
+      this.setStatus('connected');
+      return;
+    }
+    this.setStatus('connecting');
   }
 
   render() {
@@ -106,24 +97,13 @@ class ConnectionStatus extends Component {
       disconnected: 'Disconnected'
     }[this.status];
 
-    const timeText = this.lastUpdate ? '' : '';
-
     this.container.innerHTML = `
       <span class="connection-status-dot"></span>
       <span class="connection-status-text">${statusText}</span>
-      ${this.lastUpdate ? `<span class="connection-status-time">${timeText}</span>` : ''}
     `;
-
-    if (this.lastUpdate) {
-      this.updateTimeDisplay();
-    }
   }
 
-  onUnmount() {
-    if (this.updateInterval) {
-      clearInterval(this.updateInterval);
-    }
-  }
+  onUnmount() {}
 }
 
 export default ConnectionStatus;

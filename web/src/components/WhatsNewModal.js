@@ -2,7 +2,6 @@
 // Auto-displays on version changes, dismissible
 
 import { Component } from '../lifecycle.js';
-import { $ } from '../utils.js';
 
 const APP_VERSION = '2.0.0'; // UX transformation version
 const STORAGE_KEY = 'block-buster-whats-new-seen';

@@ -25,6 +25,7 @@ import errorBoundary from './errors.js';
 import features from './features.js';
 import perf from './perf.js';
 import { $ } from './utils.js';
+import mockDataManager from './mock-data-manager.js';
 
 // Configuration
 const API_BASE = window.BLOCK_BUSTER_API || 'http://localhost:5000';
@@ -94,6 +95,7 @@ function initializeState() {
   // Set initial state values
   appState.set('offline', false);
   appState.set('route', router.getCurrentPath());
+  appState.set('connectionMode', 'DETECTING');
 
   // Mock data for initial render (will be replaced by API calls)
   appState.set('metrics', {
@@ -142,55 +144,17 @@ function initializeState() {
 
 // Health check for offline detection
 async function checkHealth() {
-  // Skip health check in mock mode
-  if (features.isEnabled('mock_rpc')) {
+  // If we're already in mock mode, we are intentionally offline
+  if (mockDataManager.isMockMode() || features.isEnabled('mock_rpc')) {
     appState.set('offline', false);
-    return true;
-  }
-  
-  try {
-    // Use manual AbortController for compatibility
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 3000); // 3s timeout
-
-    const response = await fetch(HEALTH_URL, {
-      method: 'GET',
-      headers: { 'Content-Type': 'application/json' },
-      signal: controller.signal,
-    });
-
-    clearTimeout(timeoutId);
-
-    if (!response.ok) {
-      console.warn('[App] Health check returned:', response.status);
-      appState.set('offline', true);
-      return false;
-    }
-
-    // Require a live node, not just the dashboard host
-    const data = await response.json().catch(() => ({}));
-    const bootstrap = data?.bootstrap || {};
-    const rpcConnected = Boolean(
-      bootstrap.rpc_connected ?? bootstrap.genesis_ready ?? false,
-    );
-
-    if (!rpcConnected) {
-      console.warn('[App] Health check: dashboard up but node unavailable');
-      appState.set('offline', true);
-      return false;
-    }
-
-    appState.set('offline', false);
-    return true;
-  } catch (error) {
-    if (error.name === 'AbortError') {
-      console.log('[App] Health check timeout - backend unavailable');
-    } else {
-      console.warn('[App] Health check failed:', error.message);
-    }
-    appState.set('offline', true);
     return false;
   }
+
+  // Reuse the mock data manager's detection loop so state stays in sync
+  const detected = await mockDataManager.detectNode(3000);
+  const live = detected && mockDataManager.isLiveMode();
+  appState.set('offline', !live);
+  return live;
 }
 
 // Offline banner management
@@ -336,7 +300,7 @@ async function init() {
   initializeStateDebugging();
   
   // Check API health first (before showing UI)
-  backendAvailable = await checkHealth();
+  backendAvailable = await mockDataManager.detectNode(5000);
   console.log(`[App] Backend status: ${backendAvailable ? 'CONNECTED' : 'UNAVAILABLE'}`);
   
   // If backend unavailable and not in mock mode, show interstitial
@@ -375,6 +339,7 @@ async function init() {
   components.adMarket = new AdMarket(rpc);
   components.computeMarket = new ComputeMarket(rpc);
   components.storageMarket = new StorageMarket(rpc);
+  components.economics = new Economics(rpc);
   components.governance = new Governance(rpc);
   components.treasury = new Treasury(rpc);
   components.trading = new Trading(rpc);
@@ -383,6 +348,7 @@ async function init() {
   // Re-register routes with updated components
   router
     .register('theblock', components.theblock)
+    .register('economics', components.economics)
     .register('energy', components.energyMarket)
     .register('ads', components.adMarket)
     .register('compute', components.computeMarket)

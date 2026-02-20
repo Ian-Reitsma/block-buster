@@ -39,17 +39,18 @@ function resolveApiConfig() {
     const injected = typeof window !== 'undefined' ? (window.BLOCK_BUSTER_API || null) : null;
     const injectedWs = typeof window !== 'undefined' ? (window.BLOCK_BUSTER_WS || null) : null;
     const storedBase = typeof localStorage !== 'undefined' ? localStorage.getItem('block_buster_api_base') : null;
-    const devHost = `${protocol}//${hostname}:${port || '5000'}`;
+    const devHost = `${protocol}//${hostname || 'localhost'}:${port || '5000'}`;
     const isStaticPort = port === '5173' || port === '4173' || port === '8000';
     const ignoreStored = storedBase && storedBase === devHost && isStaticPort;
     const fallback =
         port === '5173' || port === '4173'
-            ? `${protocol}//${hostname}:5000`
+            ? `${protocol}//${hostname || 'localhost'}:5000`
             : port === '8000'
-                ? `${protocol}//${hostname}:5000`
+                ? `${protocol}//${hostname || 'localhost'}:5000`
                 : devHost;
+    const safeFallback = validateApiBase(fallback) ? fallback : 'http://localhost:5000';
     const candidateBase = ignoreStored ? null : storedBase;
-    const apiBase = validateApiBase(injected || candidateBase) ? (injected || candidateBase) : fallback;
+    const apiBase = validateApiBase(injected || candidateBase) ? (injected || candidateBase) : safeFallback;
     const apiKey = typeof localStorage !== 'undefined' ? localStorage.getItem('block_buster_api_key') || utilsRoot.BLOCK_BUSTER_API_KEY || '' : '';
     if (typeof localStorage !== 'undefined') {
         localStorage.setItem('block_buster_api_base', apiBase);

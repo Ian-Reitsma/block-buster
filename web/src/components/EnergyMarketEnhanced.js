@@ -31,7 +31,6 @@ import SelectionPanel from './SelectionPanel.js';
 import FilterBuilder from './FilterBuilder.js';
 import Modal from './Modal.js';
 import { fmt, $ } from '../utils.js';
-import perf from '../perf.js';
 
 class EnergyMarketEnhanced extends Component {
   constructor(rpc) {
@@ -345,7 +344,7 @@ class EnergyMarketEnhanced extends Component {
         { key: 'status', label: 'Status', type: 'select' },
         { key: 'jurisdiction', label: 'Jurisdiction', type: 'text' },
       ],
-      onFilterChange: (filters) => {
+      onFilterChange: (_filters) => {
         const filtered = this.filterBuilder.applyFilters(providers);
         this.updateProvidersTable(filtered);
       },
@@ -448,9 +447,6 @@ class EnergyMarketEnhanced extends Component {
   renderReadings() {
     const view = document.createElement('div');
     view.className = 'energy-readings-view card';
-
-    const marketData = appState.get('energyMarket') || {};
-    const receipts = marketData.receipts || [];
 
     view.innerHTML = `
       <h3>Meter Readings & Receipts</h3>
@@ -579,9 +575,6 @@ class EnergyMarketEnhanced extends Component {
     const view = document.createElement('div');
     view.className = 'energy-slashes-view card';
 
-    const marketData = appState.get('energyMarket') || {};
-    const slashes = marketData.slashes || [];
-
     view.innerHTML = `
       <h3>Slash Events</h3>
       <p class="muted mb-6">Penalties and stake reductions</p>
@@ -607,7 +600,7 @@ class EnergyMarketEnhanced extends Component {
       type: 'area',
       series: [{
         name: 'Energy Supply',
-         timeSeries,
+        data: timeSeries,
         color: '#1ac6a2',
       }],
       xAxis: { type: 'time', label: 'Time' },
@@ -627,7 +620,7 @@ class EnergyMarketEnhanced extends Component {
       jurisdictions[j] = (jurisdictions[j] || 0) + 1;
     });
 
-    const data = Object.entries(jurisdictions).map(([j, count], idx) => [
+    const data = Object.entries(jurisdictions).map(([_j, count], idx) => [
       idx,
       count,
     ]);
@@ -976,7 +969,7 @@ class EnergyMarketEnhanced extends Component {
       this.charts.energySupply.updateData([
         {
           name: 'Energy Supply',
-           (data.receipts || []).map(r => [
+          data: (data.receipts || []).map(r => [
             new Date(r.timestamp).getTime(),
             r.energy_kwh || 0,
           ]),

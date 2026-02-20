@@ -351,7 +351,7 @@ class DataTable extends Component {
     }
   }
 
-  handleSort(column, multiSort) {
+  handleSort(column, _multiSort) {
     if (this.sortColumn === column) {
       this.sortDirection = this.sortDirection === 'asc' ? 'desc' : 'asc';
     } else {

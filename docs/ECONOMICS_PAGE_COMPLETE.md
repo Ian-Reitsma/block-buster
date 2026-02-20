@@ -1,7 +1,7 @@
 # Economics Page - Complete Implementation Summary
 
-**Status:** ✅ Production Ready  
-**Completion Date:** February 12, 2026  
+**Status:** ✅ Production Ready (Lab v2 live)  
+**Completion Date:** February 19, 2026  
 **Developer:** AI Agent (following comprehensive vision)
 
 ---
@@ -10,12 +10,12 @@
 
 The Economics & Gating dashboard is now **fully implemented and optimized** with production-grade UX, animations, error handling, and accessibility. This page serves as the central hub for understanding The Block's adaptive monetary policy and market readiness.
 
-### Key Achievements
-- ✅ **100% Vision Coverage**: All components from `ECONOMICS_PAGE_VISION.md` implemented
-- ✅ **Enhanced UX**: Smooth animations, loading states, tooltips, hover effects
-- ✅ **Accessibility**: ARIA labels, keyboard shortcuts, semantic HTML
-- ✅ **Performance**: Debounced updates, visibility API optimization, retry logic
-- ✅ **Mobile First**: Responsive design with breakpoint testing
+### Key Achievements (v2)
+- ✅ **Economics Lab 2.0**: Live vs scenario comparison, presets, richer controls, and dual-line supply projection
+- ✅ **UX Uplift**: Lab chips, delta badges, richer empty/error states, keyboardable presets, tactile sliders
+- ✅ **Explainability**: Factor-impact chart decomposes reward; supply runway table shows 1/3/5/10 year paths; gate preview shows readiness shifts
+- ✅ **Resilience**: Lab hydrates from live snapshot by default, clamps unsafe inputs, and keeps charts responsive when data is sparse
+- ✅ **Accessibility**: New controls carry ARIA labels/focus states; reduced-motion respected
 
 ---
 
@@ -23,72 +23,57 @@ The Economics & Gating dashboard is now **fully implemented and optimized** with
 
 ### 1. HTML (`economics.html`)
 **Location:** `web/public/economics.html`  
-**Lines of Code:** 450+
+**Lines of Code:** ~600
 
 #### Features:
 - **Macro Economy Grid** (3-column): Supply, Network Phase, Block Reward
 - **Path to Mainnet**: Priority visualization with progress bars and threshold indicators
 - **Market Deep Dives** (2×2 grid): Storage, Compute, Energy, Ads
-- **Interactive Simulator**: Dual sliders with real-time projections
+- **Economics Lab (v2)**: Scenario presets, live-vs-lab delta badges, expanded controls (block time, mempool fullness, readiness boost), factor-impact chart, dual-line supply projection, supply runway table, and gate preview chips
 - **Treasury Dashboard**: Balance, fees, proposals
-- **Inline CSS**: Custom animations, tooltips, slider styling
+- **Inline CSS**: Custom animations, tooltips, slider styling, lab chip/compare styles
 
 #### UX Enhancements:
 - ✨ **Skeleton loaders** for initial load
 - 🔔 **Tooltip system** with `data-tooltip` attribute (hover to see explanations)
 - 🎨 **Status color coding**: Green (Trade), Yellow (Rehearsal), Gray (Gated)
-- 📊 **Empty states** for charts with no data
-- ⌨️ **Keyboard hint** (bottom right): "R" to refresh
+- 📊 **Empty states** for charts with no data, plus lab-specific “waiting for live snapshot” badges
+- ⌨️ **Keyboard hint** (bottom right): "R" to refresh; presets focusable and activatable via Enter/Space
 
 ---
 
 ### 2. JavaScript (`economics.js`)
 **Location:** `web/public/js/economics.js`  
-**Lines of Code:** 800+
+**Lines of Code:** 900+
 
-#### Architecture:
+#### Architecture (v2 additions):
 ```
 State Management
 └─ API Client (retry logic)
 └─ Data Fetching (parallel with Promise.allSettled)
 └─ UI Updates (animated transitions)
 └─ Chart Rendering (Chart.js with custom theme)
-└─ Interactive Simulator (debounced)
+└─ Economics Lab (presets, live snapshot deltas, factor impact chart, supply runway)
+└─ Interactive Simulator (debounced, now drives Lab)
 └─ Auto-refresh (visibility-aware)
 ```
 
-#### Core Functions:
+#### Core Functions (delta):
 
-**Issuance Formula (Rust Port):**
-```javascript
-reward = base × activity × decentralization × decay
+- **Issuance formula** unchanged; now decomposed into factor contributions for the lab chart
+- **Lab presets** (`labPresets`) hydrate sliders and chip badges (Live Snapshot, Throughput Surge, Validator Drop, Bear Market, Unlock Push)
+- **Dual supply projection** overlays live vs scenario curves
+- **Supply runway table** auto-computes 1/3/5/10 year minted amounts and cap gap
+- **Gate preview** applies a bounded readiness boost ±20% and mempool pressure penalty (lab-only heuristic) to show how close each market is to the 80% unlock line
 
-activity = 1.0 + (log2(volumeRatio) × 0.3)     // Range: 0.5-2.0
-decentralization = 0.8 + (sqrt(miners/1000) × 0.4)  // Range: 0.8-1.5
-decay = 0.5^(blockHeight / halvingInterval)
-```
-
-**API Endpoints:**
-| Method | Purpose | Retry | Fallback |
-|--------|---------|-------|----------|
-| `governor.status` | Gate states | 2 | None |
-| `governor.decisions` | History | 2 | None |
-| `consensus.block_reward` | Current reward | 2 | Default 10 |
-| `ledger.supply` | Circulating supply | 1 | Estimate from height |
-| `analytics.market_metrics` | Market data | 1 | Empty object |
-| `treasury.balance` | Treasury holdings | 1 | 0 |
+**API Endpoints:** unchanged (still RPC-only, no new dependencies)
 
 **Animation System:**
-- **Number Counting:** 20-step interpolation over 500ms
-- **Progress Bars:** CSS transitions (600ms cubic-bezier)
-- **Gate Updates:** Smooth color transitions
-- **Chart Updates:** 750ms easing
+- Number counting, progress bars, gate updates, and chart easing remain; lab factor chart uses horizontal bars with the same easing
 
 **Optimization:**
-- Simulator updates **debounced** at 300ms
-- Auto-refresh **pauses** when tab hidden (Visibility API)
-- Chart data updates use `'none'` mode to skip animation
-- Parallel data fetching with `Promise.allSettled`
+- Simulator + lab updates **debounced** at 300ms, reuse a single compute path for projections and factor chart updates
+- Live snapshot cached so lab presets apply instantly even if RPC is briefly unavailable
 
 ---
 
@@ -133,13 +118,14 @@ decay = 0.5^(blockHeight / halvingInterval)
 ### Mouse Interactions
 - **Hover on cards**: Slight lift + glow shadow
 - **Hover on tooltips**: Reveal explanation
-- **Slider drag**: Live formula + chart updates
+- **Slider drag**: Live formula + chart + factor impact + gate preview updates
+- **Preset chips**: Focusable, Enter/Space activates scenario and updates deltas
 - **Button clicks**: Immediate visual feedback
 
 ### Touch/Mobile
 - **Single column stacking** on `<md` breakpoint
 - **Larger touch targets** (48px minimum)
-- **Swipe-friendly** progress bars
+- **Swipe-friendly** progress bars and lab chips
 
 ---
 
@@ -208,7 +194,7 @@ economicsDashboard.stopAutoRefresh()        // Pause timers
 ### Phase 2 (Post-MVP)
 1. **Sankey Diagram**: Token flow visualization with D3.js
 2. **WebSocket Updates**: Real-time gate changes without polling
-3. **Historical Comparison**: Show epoch-over-epoch changes
+3. **Historical Comparison**: Show epoch-over-epoch changes (dual projection covers partial; still add diff table)
 4. **Export Data**: CSV download of gate history
 5. **Notifications**: Browser alerts when gates open
 
@@ -279,6 +265,11 @@ economicsDashboard.stopAutoRefresh()        // Pause timers
 ---
 
 ## 📝 Change Log
+
+### v1.1.0 - February 19, 2026
+- ✅ Economics Lab 2.0 (presets, factor chart, dual projections, runway table, gate preview)
+- ✅ UX uplift (deltas, chips, better empty/error states)
+- ✅ Accessibility pass for new controls
 
 ### v1.0.0 - February 12, 2026
 - ✅ Initial release

@@ -362,7 +362,7 @@ class OrderBookDepthChart extends Component {
     );
   }
 
-  drawTooltip(point, padding, width, height) {
+  drawTooltip(point, _padding, _width, _height) {
     const { ctx } = this;
     
     const x = 20;
@@ -439,9 +439,6 @@ class OrderBookDepthChart extends Component {
     }
 
     // Calculate price and volume at mouse position
-    const priceAtMouse = maxPrice - ((y - top) / height) * (maxPrice - minPrice);
-    const volumeAtMouse = ((x - left) / width) * maxVolume;
-
     // Find nearest point in bid or ask depth
     const bidDepth = this.calculateDepth(this.data.bids, 'bid');
     const askDepth = this.calculateDepth(this.data.asks, 'ask');
@@ -471,7 +468,7 @@ class OrderBookDepthChart extends Component {
     return minDistance < 0.1 ? nearest : null;
   }
 
-  handleClick(e) {
+  handleClick() {
     if (this.hoveredPoint && this.options.onPriceClick) {
       this.options.onPriceClick(this.hoveredPoint.price / 100000); // Convert to USD
     }

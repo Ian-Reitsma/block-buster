@@ -421,7 +421,7 @@ class MarketChart extends Component {
     
     ctx.fillStyle = series.color || '#1ac6a2';
     
-    series.data.forEach((point, i) => {
+    series.data.forEach((point, _i) => {
       const [x, y] = point;
       const screenX = this.dataToScreenX(x, chartArea) - barWidth / 2;
       const zeroY = this.dataToScreenY(0, chartArea);

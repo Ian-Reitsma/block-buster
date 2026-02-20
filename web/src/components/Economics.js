@@ -10,7 +10,6 @@
  */
 
 import { Component } from '../lifecycle.js';
-import { $ } from '../utils.js';
 import NetworkIssuanceChart from './NetworkIssuanceChart.js';
 import EconomicControlLaws from './EconomicControlLaws.js';
 import ReceiptAuditInterface from './ReceiptAuditInterface.js';
@@ -27,9 +26,10 @@ class Economics extends Component {
       receipts: null,
       simulator: null,
     };
+    this.container = null;
   }
 
-  render() {
+  buildLayout() {
     const container = document.createElement('div');
     container.className = 'content economics-dashboard';
 
@@ -72,9 +72,23 @@ class Economics extends Component {
     return container;
   }
 
+  render() {
+    return this.buildLayout();
+  }
+
   async onMount() {
-    // Attach tab listeners
-    const tabs = document.querySelectorAll('.tabs .tab');
+    this.container = document.querySelector('#app');
+    if (!this.container) {
+      console.warn('[Economics] #app container not found');
+      return;
+    }
+
+    // Render shell into the main app container
+    this.container.innerHTML = '';
+    this.container.appendChild(this.buildLayout());
+
+    // Attach tab listeners scoped to this component
+    const tabs = this.container.querySelectorAll('.tabs .tab');
     tabs.forEach(tab => {
       this.listen(tab, 'click', (e) => {
         this.switchTab(e.currentTarget.dataset.tab);
@@ -100,7 +114,7 @@ class Economics extends Component {
     });
 
     // Get content container
-    const content = $('#economics-content');
+    const content = this.container?.querySelector('#economics-content');
     if (!content) return;
 
     // Create and mount new component

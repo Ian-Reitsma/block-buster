@@ -3,7 +3,6 @@
 // Trigger with '?' or Ctrl+/
 
 import { Component } from '../lifecycle.js';
-import { $ } from '../utils.js';
 
 class KeyboardShortcuts extends Component {
   constructor(router) {

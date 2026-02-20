@@ -12,7 +12,6 @@
  */
 
 import mockDataManager from '../mock-data-manager.js';
-import appState from '../state.js';
 
 export default class MempoolInspector {
   constructor(container) {

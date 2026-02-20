@@ -16,6 +16,11 @@ class MockDataManager {
     this.mode = 'DETECTING'; // DETECTING | LIVE | MOCK
     this.mockData = {};
     this.updateInterval = null;
+    // Adaptive baseline state mirrors NetworkIssuanceController
+    this.baselineTxCount = 100;
+    this.baselineTxVolume = 10_000;
+    this.baselineMiners = 10;
+    this.prevAnnualIssuance = 0;
     // Use same base URL as main app (default: localhost:5000)
     this.nodeUrl = window.BLOCK_BUSTER_API || 'http://localhost:5000';
   }
@@ -144,98 +149,196 @@ class MockDataManager {
    * Based on: ~/projects/the-block/docs/economics_and_governance.md
    */
   mockNetworkIssuance(params = {}) {
-    const MAX_SUPPLY_BLOCK = 40_000_000;
-    const EXPECTED_TOTAL_BLOCKS = 100_000_000;
-    
-    // Base reward: (0.9 × 40M) / 100M = 0.36 BLOCK
-    const base_reward = (0.9 * MAX_SUPPLY_BLOCK) / EXPECTED_TOTAL_BLOCKS;
-    
-    // Activity multiplier (bounds: [0.5, 1.8])
-    // Early network = lower activity
-    const maturityFactor = Math.min(1.0, this.currentEmission / 10_000_000);
-    const tx_count_ratio = 0.8 + maturityFactor * 0.6 + this.noise(0.1); // 0.8 early → 1.4 mature
-    const tx_volume_ratio = 0.9 + maturityFactor * 0.8 + this.noise(0.15); // 0.9 early → 1.7 mature
-    const market_utilization = 0.45 + maturityFactor * 0.30 + this.noise(0.08); // 0.45 early → 0.75 mature
-    
-    // Geometric mean of 3 components
-    let activity_multiplier = Math.pow(
-      tx_count_ratio * tx_volume_ratio * (1 + market_utilization),
-      1/3
+    const PPM = 1_000_000;
+    const paramsDefault = {
+      max_supply_block: 40_000_000,
+      expected_total_blocks: 20_000_000,
+      baseline_tx_count: 100,
+      baseline_tx_volume_block: 10_000,
+      baseline_miners: 10,
+      activity_multiplier_min_ppm: 500_000,
+      activity_multiplier_max_ppm: 2_000_000,
+      decentralization_multiplier_min_ppm: 500_000,
+      decentralization_multiplier_max_ppm: 1_500_000,
+      adaptive_baselines_enabled: true,
+      baseline_ema_alpha_ppm: 50_000,
+      kill_switch_reduction_ppm: 0,
+    };
+
+    const paramsMerged = { ...paramsDefault, ...params };
+    const alpha = paramsMerged.baseline_ema_alpha_ppm / PPM;
+
+    // Helpers (ppm aware)
+    const clampPpm = (v, min, max) => Math.min(Math.max(v, min), max);
+    const mulDivPpm = (a, b, denom) => (denom === 0 ? 0 : Math.round((a * b) / denom));
+    const sqrtPpm = (v) => Math.round(Math.sqrt(v / PPM) * PPM);
+    const pow2Ppm = (v) => Math.min(Math.round((v * v) / PPM), Number.MAX_SAFE_INTEGER);
+
+    // Observed metrics from mock state
+    const tpsSeries = this.mockData.tpsHistory || [];
+    const currentTps = tpsSeries.length ? tpsSeries[tpsSeries.length - 1].value : 80;
+    const epochSeconds = 120;
+    const tx_count = Math.max(1, Math.round(currentTps * epochSeconds));
+    const tx_volume_block = Math.max(1, Math.round(tx_count * 0.5));
+    const unique_miners = 20;
+    const avg_market_utilization_ppm = Math.round(
+      clampPpm(
+        Math.floor(((this.mockData?.energyMarket?.avg_utilization || 0.6) * PPM)),
+        0,
+        PPM,
+      ),
     );
-    
-    // Clamp to bounds [0.5, 1.8]
-    activity_multiplier = Math.max(0.5, Math.min(1.8, activity_multiplier));
-    
-    // Decentralization factor: sqrt(unique_miners / baseline)
-    // Early network = fewer miners, but growing
-    const baseline_miners = 20;
-    const unique_miners = Math.floor(15 + maturityFactor * 15 + this.noise(3)); // 15 early → 30 mature
-    const decentralization_factor = Math.sqrt(unique_miners / baseline_miners);
-    
-    // Supply decay: (MAX - emission) / MAX
-    const current_emission = this.currentEmission;
-    const supply_decay = (MAX_SUPPLY_BLOCK - current_emission) / MAX_SUPPLY_BLOCK;
-    
-    // Final reward per block
-    const reward = base_reward * activity_multiplier * decentralization_factor * supply_decay;
-    
-    // Annual issuance (blocks per year ~= 31.5M at 1s blocks)
-    const blocks_per_year = 365 * 24 * 3600;
-    const annual_issuance = reward * blocks_per_year;
-    
-    // Realized inflation (bps)
-    const realized_inflation_bps = (annual_issuance / current_emission) * 10000;
-    const target_inflation_bps = 500; // 5% target
-    const inflation_error_bps = realized_inflation_bps - target_inflation_bps;
-    
-    // Generate reward history (last 100 epochs = ~200 minutes)
+
+    // Base reward in ppm terms
+    const distributable_supply = mulDivPpm(
+      paramsMerged.max_supply_block,
+      900_000,
+      PPM,
+    );
+    const base_reward_ppm = mulDivPpm(
+      distributable_supply,
+      PPM,
+      paramsMerged.expected_total_blocks,
+    );
+
+    // Activity multiplier (geometric mean with utilization bonus)
+    const tx_ratio_ppm = mulDivPpm(tx_count, PPM, Math.max(1, this.baselineTxCount));
+    const volume_ratio_ppm = mulDivPpm(
+      tx_volume_block,
+      PPM,
+      Math.max(1, this.baselineTxVolume),
+    );
+    const tx_factor_ppm = sqrtPpm(Math.max(tx_ratio_ppm, 10_000));
+    const volume_factor_ppm = sqrtPpm(Math.max(volume_ratio_ppm, 10_000));
+    const utilization_bonus_ppm = 1_000_000 + avg_market_utilization_ppm;
+    const activity_multiplier_ppm = clampPpm(
+      mulDivPpm(
+        tx_factor_ppm,
+        mulDivPpm(volume_factor_ppm, utilization_bonus_ppm, PPM),
+        PPM,
+      ),
+      paramsMerged.activity_multiplier_min_ppm,
+      paramsMerged.activity_multiplier_max_ppm,
+    );
+
+    // Decentralization multiplier
+    const miner_ratio_ppm = mulDivPpm(unique_miners, PPM, Math.max(1, this.baselineMiners));
+    const decentralization_multiplier_ppm = clampPpm(
+      sqrtPpm(Math.max(miner_ratio_ppm, 10_000)),
+      paramsMerged.decentralization_multiplier_min_ppm,
+      paramsMerged.decentralization_multiplier_max_ppm,
+    );
+
+    // Supply decay (quadratic)
+    const remaining = paramsMerged.max_supply_block - this.currentEmission;
+    const remaining_ratio_ppm = mulDivPpm(
+      remaining,
+      PPM,
+      paramsMerged.max_supply_block,
+    );
+    const supply_decay_ppm = pow2Ppm(remaining_ratio_ppm);
+
+    // Combine
+    const reward_unclamped_ppm = mulDivPpm(
+      mulDivPpm(
+        mulDivPpm(base_reward_ppm, activity_multiplier_ppm, PPM),
+        decentralization_multiplier_ppm,
+        PPM,
+      ),
+      supply_decay_ppm,
+      PPM,
+    );
+
+    const reward_reduced_ppm = mulDivPpm(
+      reward_unclamped_ppm,
+      PPM - Math.min(paramsMerged.kill_switch_reduction_ppm, PPM),
+      PPM,
+    );
+
+    const reward = Math.round((reward_reduced_ppm + PPM / 2) / PPM);
+    const annual_issuance = reward * 31_536_000;
+
+    // Drift clamp (5%/yr)
+    const MAX_ANNUAL_DRIFT_PPM = 50_000;
+    let final_reward = reward;
+    if (this.prevAnnualIssuance > 0) {
+      const drift_ppm = Math.round(
+        Math.abs(annual_issuance - this.prevAnnualIssuance) / Math.max(1, this.prevAnnualIssuance) * PPM,
+      );
+      if (drift_ppm > MAX_ANNUAL_DRIFT_PPM) {
+        const cap = Math.round(
+          this.prevAnnualIssuance * (1 + MAX_ANNUAL_DRIFT_PPM / PPM),
+        );
+        const capped_reward = Math.round(cap / 31_536_000);
+        final_reward = Math.min(final_reward, capped_reward);
+      }
+    }
+
+    // Update adaptive baselines (EMA)
+    this.baselineTxCount = Math.max(
+      paramsMerged.baseline_tx_count,
+      Math.min(
+        10_000,
+        (1 - alpha) * this.baselineTxCount + alpha * tx_count,
+      ),
+    );
+    this.baselineTxVolume = Math.max(
+      paramsMerged.baseline_tx_volume_block,
+      Math.min(
+        1_000_000,
+        (1 - alpha) * this.baselineTxVolume + alpha * tx_volume_block,
+      ),
+    );
+    this.baselineMiners = Math.max(
+      paramsMerged.baseline_miners,
+      Math.min(
+        100,
+        (1 - alpha) * this.baselineMiners + alpha * unique_miners,
+      ),
+    );
+
+    this.prevAnnualIssuance = annual_issuance;
+
+    // History points for charts (keep same shape)
     const history = [];
     for (let i = 0; i < 100; i++) {
       const epochNum = this.currentEpoch - 99 + i;
-      const blockNum = epochNum * 120; // 120 blocks per epoch
-      const smallVariance = 0.97 + Math.random() * 0.06; // ±3% per-epoch variance
+      const blockNum = epochNum * 120;
       history.push({
         epoch: epochNum,
         block: blockNum,
-        reward: reward * smallVariance,
-        timestamp: Date.now() - (99 - i) * 120 * 1000, // 120s per epoch
+        reward: final_reward,
+        timestamp: Date.now() - (99 - i) * 120 * 1000,
       });
     }
-    
+
     return {
-      // Formula components
-      base_reward,
-      activity_multiplier,
+      base_reward: base_reward_ppm / PPM,
+      activity_multiplier: activity_multiplier_ppm / PPM,
       activity_breakdown: {
-        tx_count_ratio,
-        tx_volume_ratio,
-        avg_market_utilization: market_utilization,
+        tx_count_ratio: tx_ratio_ppm / PPM,
+        tx_volume_ratio: volume_ratio_ppm / PPM,
+        avg_market_utilization: avg_market_utilization_ppm / PPM,
       },
-      decentralization_factor,
+      decentralization_factor: decentralization_multiplier_ppm / PPM,
       unique_miners,
-      baseline_miners,
-      supply_decay,
-      
-      // Supply
-      emission_consumer: current_emission,
-      remaining_supply: MAX_SUPPLY_BLOCK - current_emission,
-      max_supply: MAX_SUPPLY_BLOCK,
-      
-      // Output
-      final_reward: reward,
-      block_reward_per_block: reward,
+      baseline_miners: this.baselineMiners,
+      supply_decay: supply_decay_ppm / PPM,
+      emission_consumer: this.currentEmission,
+      remaining_supply: paramsMerged.max_supply_block - this.currentEmission,
+      max_supply: paramsMerged.max_supply_block,
+      final_reward,
+      block_reward_per_block: final_reward,
       annual_issuance,
-      
-      // Inflation tracking
-      realized_inflation_bps,
-      target_inflation_bps,
-      inflation_error_bps,
-      
-      // Network state
+      realized_inflation_bps: this.currentEmission
+        ? (annual_issuance / this.currentEmission) * 10_000
+        : 0,
+      target_inflation_bps: 500,
+      inflation_error_bps: this.currentEmission
+        ? (annual_issuance / this.currentEmission) * 10_000 - 500
+        : 0,
       epoch: this.currentEpoch,
       block_height: this.currentBlock,
-      
-      // History
       history,
     };
   }
@@ -463,18 +566,11 @@ class MockDataManager {
    * Accounts for time of day, network growth stage, and organic variation
    */
   getRealisticTPS() {
-    // Early network (3.2M / 40M = 8% of supply issued)
-    // TPS grows with network maturity
-    const maturityFactor = Math.min(1.0, this.currentEmission / 10_000_000); // 0 to 1.0 as network grows
-    
-    // Base TPS ranges by maturity
-    const minTPS = 30 + maturityFactor * 70; // 30 early → 100 mature
-    const maxTPS = 100 + maturityFactor * 400; // 100 early → 500 mature
-    
-    // Current baseline (lerp between min and max)
+    // Simulate an active network: 800–1500 TPS with day/night modulation
+    const maturityFactor = Math.min(1.0, this.currentEmission / 10_000_000);
+    const minTPS = 800 + maturityFactor * 200;  // 800 → 1000
+    const maxTPS = 1200 + maturityFactor * 300; // 1200 → 1500
     const baseline = minTPS + (maxTPS - minTPS) * 0.5;
-    
-    // Time of day multiplier
     return baseline * this.timeOfDayMultiplier;
   }
 

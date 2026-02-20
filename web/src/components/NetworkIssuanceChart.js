@@ -10,6 +10,7 @@
 import { Component } from '../lifecycle.js';
 import { fmt, $ } from '../utils.js';
 import mockDataManager from '../mock-data-manager.js';
+import features from '../features.js';
 
 class NetworkIssuanceChart extends Component {
   constructor(rpc, options = {}) {
@@ -27,21 +28,18 @@ class NetworkIssuanceChart extends Component {
   }
 
   async fetchData() {
-    try {
-      if (mockDataManager.isLiveMode()) {
-        // Fetch from RPC
-        const economics = await this.rpc.call('economics.replay', {
-          to_height: 'tip',
-        });
+    const useLive = features.isEnabled('economics_live');
+    if (useLive) {
+      try {
+        const economics = await this.rpc.call('economics.replay', { to_height: 'tip' });
+        this.isSimulated = false;
         return this.transformLiveData(economics);
-      } else {
-        // Use mock data
-        return mockDataManager.get('issuance');
+      } catch (error) {
+        console.warn('[NetworkIssuanceChart] Live economics RPC failed, falling back to simulated:', error?.message);
       }
-    } catch (error) {
-      console.error('[NetworkIssuanceChart] Failed to fetch:', error);
-      return mockDataManager.get('issuance');
     }
+    this.isSimulated = true;
+    return mockDataManager.get('issuance');
   }
 
   transformLiveData(economics) {
@@ -79,6 +77,7 @@ class NetworkIssuanceChart extends Component {
         <h3>Network Issuance Formula</h3>
         <p class="muted small">Activity-based reward calculation</p>
       </div>
+      <div class="pill pill-muted" id="issuance-sim-badge" style="display:none;">Simulated</div>
       <div class="chart-controls">
         <button class="btn btn-sm" data-period="7d">7d</button>
         <button class="btn btn-sm active" data-period="30d">30d</button>
@@ -122,6 +121,10 @@ class NetworkIssuanceChart extends Component {
   async onMount() {
     // Fetch initial data
     this.data = await this.fetchData();
+    const simBadge = $('#issuance-sim-badge');
+    if (simBadge) {
+      simBadge.style.display = this.isSimulated ? 'inline-flex' : 'none';
+    }
     
     // Render formula
     this.renderFormula();

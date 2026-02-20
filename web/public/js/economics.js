@@ -19,7 +19,7 @@
     const MAX_SUPPLY = 40_000_000;
     const BASE_REWARD = 10;
     const HALVING_INTERVAL = 1_000_000;
-    const BLOCKS_PER_YEAR = 365 * 24 * 60 * 6; // 10s block time
+    const SECONDS_PER_YEAR = 365 * 24 * 60 * 60;
     const SIMULATOR_DEBOUNCE = 300; // ms
 
     const CHART_COLORS = {
@@ -53,7 +53,12 @@
         isLoading: false,
         lastUpdate: null,
         refreshTimer: null,
-        gateTimer: null
+        gateTimer: null,
+        lab: {
+            preset: 'live',
+            liveSnapshot: null,
+            scenario: null
+        }
     };
 
     // ===== Issuance Formula (Ported from Rust NetworkIssuanceController) =====
@@ -90,6 +95,22 @@
         if (minerCount <= 0) return 0.8;
         const base = 0.8 + (Math.sqrt(minerCount / 1000) * 0.4);
         return Math.max(0.8, Math.min(1.5, base));
+    }
+
+    function annualIssuanceFromReward(rewardPerBlock, blockTimeMs) {
+        const blockTimeSec = Math.max(0.5, blockTimeMs / 1000);
+        const blocksPerYear = SECONDS_PER_YEAR / blockTimeSec;
+        return rewardPerBlock * blocksPerYear;
+    }
+
+    function supplyProjection({ currentSupply, annualIssuance, years }) {
+        const supplies = [];
+        let supply = currentSupply;
+        for (let y = 0; y <= years; y++) {
+            supplies.push({ year: y, supply });
+            supply = Math.min(MAX_SUPPLY, supply + annualIssuance);
+        }
+        return supplies;
     }
 
     // ===== API Client with Retry Logic =====
@@ -200,26 +221,61 @@
         try {
             // Parallel fetch with proper error isolation
             const results = await Promise.allSettled([
-                api.governorStatus(),
-                api.blockReward(),
-                api.ledgerSupply(),
-                api.marketMetrics(),
-                api.treasuryBalance()
+                api.governorStatus(),                          // 0
+                api.blockHeight(),                              // 1
+                api.call('consensus.stats'),                    // 2
+                api.marketMetrics(),                            // 3
+                api.treasuryBalance(),                          // 4
+                api.call('net.peer_stats_all', [{ offset: 0, limit: 256 }]), //5
+                api.call('price_board_get', {}, { retries: 1 }),             //6
             ]);
 
-            // Process results
-            const [govStatus, blockRewardRes, supplyRes, marketMetricsRes, treasuryRes] = results;
+            const [
+                govStatus,
+                heightRes,
+                statsRes,
+                marketMetricsRes,
+                treasuryRes,
+                peersRes,
+                priceRes,
+            ] = results;
+
+            const height = heightRes.status === 'fulfilled' ? (heightRes.value.result?.height || 0) : 0;
+            const tps = statsRes.status === 'fulfilled' ? (statsRes.value.result?.tps || 0) : 0;
+            const peers = peersRes.status === 'fulfilled'
+                ? (Array.isArray(peersRes.value.result) ? peersRes.value.result.length : peersRes.value.result?.length || 0)
+                : 0;
+            const reward = Math.max(0.01, estimateBlockReward({ height, tps, peers }));
+            const avgBlockTimeMs = (statsRes.status === 'fulfilled' ? (statsRes.value.result?.avg_block_time_ms || 2000) : 2000);
+            const avgBlockTimeSec = avgBlockTimeMs / 1000;
+            state.liveParams.avgBlockTime = avgBlockTimeSec;
+            state.liveParams.blockTimeMs = avgBlockTimeMs;
+
+            state.blockReward = { reward, block_height: height };
+            state.liveParams.blockHeight = height;
+            state.liveParams.baseReward = reward;
+            state.supply = {
+                circulating: height * reward,
+                total: MAX_SUPPLY,
+            };
+
+            // hydrate lab live snapshot (used by presets/reset)
+            const activityMult = state.blockReward?.activity_multiplier || 1.0;
+            const decentralMult = state.blockReward?.decentralization_multiplier || 1.0;
+            const mempoolFullness = statsRes.status === 'fulfilled'
+                ? (statsRes.value.result?.mempool_fullness_pct ?? 50)
+                : 50;
+
+            state.lab.liveSnapshot = {
+                transactionVolume: activityMult,
+                uniqueMiners: Math.max(100, Math.round(Math.pow((decentralMult - 0.8) / 0.4, 2) * 1000) || state.liveParams.uniqueMiners || 1000),
+                blockTimeMs: avgBlockTimeMs,
+                mempool: mempoolFullness,
+                readinessBoost: 0
+            };
 
             if (govStatus.status === 'fulfilled') {
                 state.governorStatus = govStatus.value.result;
-            }
-            if (blockRewardRes.status === 'fulfilled') {
-                state.blockReward = blockRewardRes.value.result;
-                state.liveParams.blockHeight = blockRewardRes.value.result?.block_height || 0;
-                state.liveParams.baseReward = blockRewardRes.value.result?.base || BASE_REWARD;
-            }
-            if (supplyRes.status === 'fulfilled') {
-                state.supply = supplyRes.value.result;
             }
             if (marketMetricsRes.status === 'fulfilled' && marketMetricsRes.value.result) {
                 state.marketMetrics = marketMetricsRes.value.result;
@@ -228,6 +284,8 @@
                 state.treasuryBalance = treasuryRes.value.result?.balance || 0;
             }
 
+            state.priceBoard = priceRes.status === 'fulfilled' ? priceRes.value.result : null;
+
             // Update UI with smooth transitions
             await Promise.all([
                 updateMacroMetrics(),
@@ -235,6 +293,9 @@
                 updateMarketCards(),
                 updateTreasury()
             ]);
+
+            // refresh lab snapshot + UI
+            updateLabFromLive();
 
             // Update status
             const elapsed = Date.now() - startTime;
@@ -273,7 +334,7 @@
         const { supply, blockReward, governorStatus } = state;
 
         // Circulating Supply with animation
-        const currentSupply = supply?.circulating || (state.liveParams.blockHeight * BASE_REWARD);
+        const currentSupply = supply?.circulating || 0;
         const supplyPct = ((currentSupply / MAX_SUPPLY) * 100);
         
         animateNumber('eco-supply', currentSupply, formatNumber);
@@ -307,7 +368,7 @@
         setText('eco-gates-summary', gatesSummary);
 
         // Block Reward
-        const reward = blockReward?.reward || BASE_REWARD;
+        const reward = blockReward?.reward || 0;
         const activityMult = blockReward?.activity_multiplier || 1.0;
         const decentralMult = blockReward?.decentralization_multiplier || 1.0;
         
@@ -522,13 +583,13 @@
         if (gateHistoryCtx) {
             state.charts.gateHistory = new Chart(gateHistoryCtx, {
                 type: 'line',
-                 {
+                data: {
                     labels: [],
                     datasets: [
-                        { label: 'Storage',  [], borderColor: CHART_COLORS.amber.border, backgroundColor: CHART_COLORS.amber.bg, tension: 0.4, fill: false },
-                        { label: 'Compute',  [], borderColor: CHART_COLORS.cyan.border, backgroundColor: CHART_COLORS.cyan.bg, tension: 0.4, fill: false },
-                        { label: 'Energy',  [], borderColor: CHART_COLORS.green.border, backgroundColor: CHART_COLORS.green.bg, tension: 0.4, fill: false },
-                        { label: 'Ads',  [], borderColor: CHART_COLORS.purple.border, backgroundColor: CHART_COLORS.purple.bg, tension: 0.4, fill: false }
+                        { label: 'Storage', data: [], borderColor: CHART_COLORS.amber.border, backgroundColor: CHART_COLORS.amber.bg, tension: 0.4, fill: false },
+                        { label: 'Compute', data: [], borderColor: CHART_COLORS.cyan.border, backgroundColor: CHART_COLORS.cyan.bg, tension: 0.4, fill: false },
+                        { label: 'Energy', data: [], borderColor: CHART_COLORS.green.border, backgroundColor: CHART_COLORS.green.bg, tension: 0.4, fill: false },
+                        { label: 'Ads', data: [], borderColor: CHART_COLORS.purple.border, backgroundColor: CHART_COLORS.purple.bg, tension: 0.4, fill: false }
                     ]
                 },
                 options: { 
@@ -547,17 +608,28 @@
         if (simChartCtx) {
             state.charts.simulator = new Chart(simChartCtx, {
                 type: 'line',
-                 {
+                data: {
                     labels: [],
-                    datasets: [{
-                        label: 'Projected Supply (M BLOCK)',
-                         [],
-                        borderColor: CHART_COLORS.amber.border,
-                        backgroundColor: CHART_COLORS.amber.bg,
-                        fill: true,
-                        tension: 0.4,
-                        borderWidth: 2
-                    }]
+                    datasets: [
+                        {
+                            label: 'Live',
+                            data: [],
+                            borderColor: CHART_COLORS.cyan.border,
+                            backgroundColor: CHART_COLORS.cyan.bg,
+                            fill: false,
+                            tension: 0.35,
+                            borderWidth: 2
+                        },
+                        {
+                            label: 'Scenario',
+                            data: [],
+                            borderColor: CHART_COLORS.amber.border,
+                            backgroundColor: CHART_COLORS.amber.bg,
+                            fill: true,
+                            tension: 0.35,
+                            borderWidth: 2
+                        }
+                    ]
                 },
                 options: {
                     ...defaultOptions,
@@ -575,10 +647,10 @@
             if (ctx) {
                 state.charts[market] = new Chart(ctx, {
                     type: 'bar',
-                     {
+                    data: {
                         labels: ['W1', 'W2', 'W3', 'W4'],
                         datasets: [{
-                             [0, 0, 0, 0],
+                            data: [0, 0, 0, 0],
                             backgroundColor: CHART_COLORS.cyan.border,
                             borderRadius: 4
                         }]
@@ -618,9 +690,10 @@
 
     function updateMarketCharts() {
         // Use real history data if available
-        const markets = ['storage', 'compute', 'energy', 'ad'];
+        const markets = ['storage', 'compute', 'energy', 'ads'];
         markets.forEach(market => {
-            const chart = state.charts[market];
+            const chartKey = market === 'ads' ? 'ad' : market;
+            const chart = state.charts[chartKey];
             if (!chart) return;
 
             const history = state.marketMetrics[market]?.history;
@@ -629,103 +702,270 @@
                 chart.data.datasets[0].data = last4.map(h => h.value || 0);
                 chart.update();
                 // Hide empty state
-                const emptyEl = document.getElementById(`eco-${market}-empty`);
+                const emptyEl = document.getElementById(`eco-${chartKey}-empty`);
                 if (emptyEl) emptyEl.classList.add('hidden');
             } else {
                 // Show empty state
-                const emptyEl = document.getElementById(`eco-${market}-empty`);
+                const emptyEl = document.getElementById(`eco-${chartKey}-empty`);
                 if (emptyEl) emptyEl.classList.remove('hidden');
             }
         });
     }
 
-    // ===== Interactive Simulator =====
+    // ===== Economics Lab (Simulator v2) =====
     let simulatorTimeout = null;
 
-    function initSimulator() {
+    function getLabInputs() {
+        const txn = parseFloat(document.getElementById('eco-sim-txn')?.value || 1);
+        const miners = parseInt(document.getElementById('eco-sim-miners')?.value || 1000);
+        const blockTimeMs = parseInt(document.getElementById('eco-sim-blocktime')?.value || 2000);
+        const mempool = parseInt(document.getElementById('eco-sim-mempool')?.value || 50);
+        const readinessBoost = parseInt(document.getElementById('eco-sim-ready')?.value || 0);
+        return { txn, miners, blockTimeMs, mempool, readinessBoost };
+    }
+
+    function applyLabInputs(inputs) {
         const txnSlider = document.getElementById('eco-sim-txn');
         const minersSlider = document.getElementById('eco-sim-miners');
-        const resetBtn = document.getElementById('eco-sim-reset');
+        const blocktimeSlider = document.getElementById('eco-sim-blocktime');
+        const mempoolSlider = document.getElementById('eco-sim-mempool');
+        const readySlider = document.getElementById('eco-sim-ready');
 
-        function updateSimulator() {
-            clearTimeout(simulatorTimeout);
-            simulatorTimeout = setTimeout(() => {
-                const txnMult = parseFloat(txnSlider.value);
-                const miners = parseInt(minersSlider.value);
+        if (txnSlider) txnSlider.value = inputs.txn.toFixed(1);
+        if (minersSlider) minersSlider.value = inputs.miners;
+        if (blocktimeSlider) blocktimeSlider.value = inputs.blockTimeMs;
+        if (mempoolSlider) mempoolSlider.value = inputs.mempool;
+        if (readySlider) readySlider.value = inputs.readinessBoost;
 
-                // Update labels
-                setText('eco-sim-txn-value', `${txnMult.toFixed(1)}x`);
-                setText('eco-sim-miners-value', formatNumber(miners));
+        updateSliderVisual(txnSlider);
+        updateSliderVisual(minersSlider);
+        updateSliderVisual(blocktimeSlider);
+        updateSliderVisual(mempoolSlider);
+        updateSliderVisual(readySlider);
+    }
 
-                // Calculate projections
-                const activityMult = activityFromVolume(txnMult);
-                const decentralMult = decentralizationFromMiners(miners);
-                const blockHeight = state.liveParams.blockHeight;
-                const baseReward = state.liveParams.baseReward;
-                
-                const projectedReward = calculateIssuance(baseReward, activityMult, decentralMult, blockHeight);
-                
-                // Update formula display
-                setText('formula-activity', activityMult.toFixed(2));
-                setText('formula-decentral', decentralMult.toFixed(2));
+    function updateLabUI(inputs, computed) {
+        setText('eco-sim-txn-value', `${inputs.txn.toFixed(1)}x`);
+        setText('eco-sim-miners-value', formatNumber(inputs.miners));
+        setText('eco-sim-blocktime-value', `${inputs.blockTimeMs}`);
+        setText('eco-sim-mempool-value', `${inputs.mempool}%`);
+        setText('eco-sim-ready-value', `${inputs.readinessBoost}%`);
+        updateSliderVisual(document.getElementById('eco-sim-txn'));
+        updateSliderVisual(document.getElementById('eco-sim-miners'));
+        updateSliderVisual(document.getElementById('eco-sim-blocktime'));
+        updateSliderVisual(document.getElementById('eco-sim-mempool'));
+        updateSliderVisual(document.getElementById('eco-sim-ready'));
 
-                // Annual inflation
-                const annualIssuance = projectedReward * BLOCKS_PER_YEAR;
-                const currentSupply = blockHeight * baseReward;
-                const inflation = currentSupply > 0 ? (annualIssuance / currentSupply) * 100 : 0;
+        // Metrics
+        animateNumber('eco-sim-reward', computed.reward, v => v.toFixed(4));
+        animateNumber('eco-sim-inflation', computed.inflation, v => v.toFixed(2) + '%');
+        setText('eco-sim-time-to-cap', computed.yearsToCapDisplay);
 
-                // Time to cap
-                const remainingSupply = MAX_SUPPLY - currentSupply;
-                const yearsToCapRaw = annualIssuance > 0 ? remainingSupply / annualIssuance : Infinity;
-                const yearsToCapDisplay = isFinite(yearsToCapRaw) && yearsToCapRaw > 0 ? yearsToCapRaw.toFixed(1) : '∞';
+        // Deltas
+        setText('lab-delta-reward', `Reward Δ: ${fmtDelta(computed.reward - computed.baseline.reward)}`);
+        setText('lab-delta-inflation', `Inflation Δ: ${fmtDelta(computed.inflation - computed.baseline.inflation)}%`);
+        setText('lab-delta-runway', `Cap Runway Δ: ${fmtDelta(computed.yearsToCap - computed.baseline.yearsToCap)} yrs`);
 
-                // Update metrics with animation
-                animateNumber('eco-sim-reward', projectedReward, v => v.toFixed(4));
-                animateNumber('eco-sim-inflation', inflation, v => v.toFixed(2) + '%');
-                setText('eco-sim-time-to-cap', yearsToCapDisplay);
+        // Factor bars
+        updateFactorBars(computed);
 
-                // Update chart
-                updateSimulatorChart(projectedReward, annualIssuance, currentSupply);
-            }, SIMULATOR_DEBOUNCE);
-        }
+        // Supply projection chart + table
+        updateProjection(computed);
 
-        function updateSimulatorChart(reward, annualIssuance, currentSupply) {
-            const chart = state.charts.simulator;
-            if (!chart) return;
+        // Gate preview
+        updateGatePreview(inputs);
+    }
 
-            const years = [];
-            const supplies = [];
-            let supply = currentSupply;
+    function fmtDelta(delta) {
+        if (!isFinite(delta)) return '—';
+        const sign = delta > 0 ? '+' : '';
+        return `${sign}${delta.toFixed(2)}`;
+    }
 
-            for (let y = 0; y <= 10; y++) {
-                years.push(y === 0 ? 'Now' : `Y${y}`);
-                supplies.push(supply / 1_000_000);
-                supply += annualIssuance;
-                if (supply >= MAX_SUPPLY) {
-                    supply = MAX_SUPPLY;
-                    years.push(`Y${y + 1}`);
-                    supplies.push(supply / 1_000_000);
-                    break;
-                }
+    function updateSliderVisual(el) {
+        if (!el) return;
+        const min = parseFloat(el.min || '0');
+        const max = parseFloat(el.max || '100');
+        const val = parseFloat(el.value || min);
+        const pct = ((val - min) / (max - min)) * 100;
+        el.style.setProperty('--val', `${pct}%`);
+    }
+
+    function updateFactorBars({ activityMult, decentralMult, decay }) {
+        const bars = [
+            { id: 'lab-factor-activity', valId: 'lab-factor-activity-val', value: activityMult },
+            { id: 'lab-factor-decentral', valId: 'lab-factor-decentral-val', value: decentralMult },
+            { id: 'lab-factor-decay', valId: 'lab-factor-decay-val', value: decay }
+        ];
+        bars.forEach(bar => {
+            const fill = document.getElementById(bar.id);
+            const label = document.getElementById(bar.valId);
+            if (!fill || !label) return;
+            const width = Math.min(100, Math.max(0, (bar.value / 2) * 100)); // heuristic scaling
+            fill.style.width = `${width}%`;
+            label.textContent = bar.value.toFixed(2) + (bar.id.includes('decay') ? 'x' : 'x');
+        });
+    }
+
+    function updateProjection(computed) {
+        const chart = state.charts.simulator;
+        if (!chart) return;
+
+        const liveAnnual = computed.baseline.annualIssuance;
+        const scenarioAnnual = computed.annualIssuance;
+        const currentSupply = state.supply?.circulating || 0;
+
+        const liveProj = supplyProjection({ currentSupply, annualIssuance: liveAnnual, years: 10 });
+        const scenarioProj = supplyProjection({ currentSupply, annualIssuance: scenarioAnnual, years: 10 });
+
+        const labels = scenarioProj.map(p => (p.year === 0 ? 'Now' : `Y${p.year}`));
+        chart.data.labels = labels;
+        chart.data.datasets[0].data = liveProj.map(p => p.supply / 1_000_000);
+        chart.data.datasets[1].data = scenarioProj.map(p => p.supply / 1_000_000);
+        chart.update();
+
+        const horizons = [
+            { years: 1, mintedId: 'lab-runway-1y', remainId: 'lab-remaining-1y' },
+            { years: 3, mintedId: 'lab-runway-3y', remainId: 'lab-remaining-3y' },
+            { years: 5, mintedId: 'lab-runway-5y', remainId: 'lab-remaining-5y' },
+            { years: 10, mintedId: 'lab-runway-10y', remainId: 'lab-remaining-10y' }
+        ];
+        horizons.forEach(h => {
+            const minted = Math.min(MAX_SUPPLY - currentSupply, scenarioAnnual * h.years);
+            const remaining = Math.max(0, MAX_SUPPLY - (currentSupply + minted));
+            setText(h.mintedId, formatNumber(minted));
+            setText(h.remainId, formatNumber(remaining));
+        });
+    }
+
+    function updateGatePreview(inputs) {
+        const gates = state.governorStatus?.gates;
+        if (!gates) return;
+        const mempoolPenalty = Math.max(0, (inputs.mempool - 60) * 0.3);
+        const boost = inputs.readinessBoost;
+        const markets = ['storage', 'compute', 'energy', 'ads'];
+        markets.forEach(market => {
+            const baseReadiness = (gates[market]?.readiness || 0) * 100;
+            let adjusted = baseReadiness + boost - mempoolPenalty;
+            adjusted = Math.max(0, Math.min(100, adjusted));
+            const bar = document.getElementById(`lab-gate-${market}-bar`);
+            const meta = document.getElementById(`lab-gate-${market}-meta`);
+            if (bar) bar.style.width = `${adjusted}%`;
+            if (meta) meta.textContent = `${adjusted.toFixed(1)}% readiness`;
+        });
+    }
+
+    function computeLabScenario() {
+        const inputs = getLabInputs();
+        const blockHeight = state.liveParams.blockHeight || 0;
+        const baseReward = state.liveParams.baseReward || BASE_REWARD;
+
+        const activityMult = activityFromVolume(inputs.txn);
+        const decentralMult = decentralizationFromMiners(inputs.miners);
+        const decay = Math.pow(0.5, Math.floor(blockHeight / HALVING_INTERVAL));
+
+        const reward = calculateIssuance(baseReward, activityMult, decentralMult, blockHeight);
+        const annualIssuance = annualIssuanceFromReward(reward, inputs.blockTimeMs);
+        const currentSupply = state.supply?.circulating || (blockHeight * baseReward);
+        const inflation = currentSupply > 0 ? (annualIssuance / currentSupply) * 100 : 0;
+        const yearsToCap = annualIssuance > 0 ? (MAX_SUPPLY - currentSupply) / annualIssuance : Infinity;
+        const yearsToCapDisplay = isFinite(yearsToCap) && yearsToCap > 0 ? yearsToCap.toFixed(1) : '∞';
+
+        // Baseline (live snapshot)
+        const live = state.lab.liveSnapshot || {};
+        const liveActivity = live.transactionVolume || 1.0;
+        const liveMiners = live.uniqueMiners || 1000;
+        const liveBlockTime = live.blockTimeMs || 2000;
+        const liveActivityMult = activityFromVolume(liveActivity);
+        const liveDecentral = decentralizationFromMiners(liveMiners);
+        const liveReward = calculateIssuance(baseReward, liveActivityMult, liveDecentral, blockHeight);
+        const liveAnnual = annualIssuanceFromReward(liveReward, liveBlockTime);
+        const liveInflation = currentSupply > 0 ? (liveAnnual / currentSupply) * 100 : 0;
+        const liveYears = liveAnnual > 0 ? (MAX_SUPPLY - currentSupply) / liveAnnual : Infinity;
+
+        return {
+            inputs,
+            reward,
+            activityMult,
+            decentralMult,
+            decay,
+            annualIssuance,
+            inflation,
+            yearsToCap,
+            yearsToCapDisplay,
+            baseline: {
+                reward: liveReward,
+                annualIssuance: liveAnnual,
+                inflation: liveInflation,
+                yearsToCap: liveYears
             }
+        };
+    }
 
-            chart.data.labels = years;
-            chart.data.datasets[0].data = supplies;
-            chart.update();
-        }
+    function updateLab() {
+        clearTimeout(simulatorTimeout);
+        simulatorTimeout = setTimeout(() => {
+            const computed = computeLabScenario();
+            state.lab.scenario = computed;
+            updateLabUI(computed.inputs, computed);
+        }, SIMULATOR_DEBOUNCE);
+    }
 
-        // Wire controls
-        txnSlider?.addEventListener('input', updateSimulator);
-        minersSlider?.addEventListener('input', updateSimulator);
-        resetBtn?.addEventListener('click', () => {
-            txnSlider.value = state.liveParams.transactionVolume.toFixed(1);
-            minersSlider.value = state.liveParams.uniqueMiners.toString();
-            updateSimulator();
-            pushToast('Simulator reset to live network data', 'info', { ttl: 2000 });
+    function bindLabControls() {
+        ['eco-sim-txn', 'eco-sim-miners', 'eco-sim-blocktime', 'eco-sim-mempool', 'eco-sim-ready'].forEach(id => {
+            document.getElementById(id)?.addEventListener('input', (e) => {
+                updateSliderVisual(e.target);
+                updateLab();
+            });
         });
 
-        // Initial render
-        updateSimulator();
+        // reset button
+        document.getElementById('eco-lab-reset')?.addEventListener('click', () => {
+            updateLabFromLive();
+            pushToast('Lab reset to live snapshot', 'info', { ttl: 2000 });
+        });
+
+        // presets
+        const presets = document.querySelectorAll('.lab-chip');
+        presets.forEach(chip => {
+            chip.addEventListener('click', () => applyPreset(chip.dataset.preset));
+            chip.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    applyPreset(chip.dataset.preset);
+                }
+            });
+        });
+    }
+
+    function applyPreset(name) {
+        const live = state.lab.liveSnapshot || {
+            transactionVolume: 1,
+            uniqueMiners: 1000,
+            blockTimeMs: 2000,
+            mempool: 50,
+            readinessBoost: 0
+        };
+        const presets = {
+            live: { ...live },
+            surge: { ...live, transactionVolume: Math.min(5, live.transactionVolume * 2.5), blockTimeMs: Math.max(800, live.blockTimeMs * 0.7), mempool: 65, readinessBoost: 8 },
+            validator_drop: { ...live, uniqueMiners: Math.max(100, Math.round(live.uniqueMiners * 0.6)), mempool: 40, readinessBoost: -5 },
+            bear: { ...live, transactionVolume: Math.max(0.5, live.transactionVolume * 0.7), blockTimeMs: Math.min(2800, live.blockTimeMs * 1.1), mempool: 30, readinessBoost: -8 },
+            unlock_push: { ...live, transactionVolume: live.transactionVolume * 1.3, blockTimeMs: Math.max(1200, live.blockTimeMs * 0.9), readinessBoost: 15, mempool: 55 }
+        };
+        const picked = presets[name] || presets.live;
+        state.lab.preset = name || 'live';
+        document.querySelectorAll('.lab-chip').forEach(chip => chip.setAttribute('aria-pressed', chip.dataset.preset === state.lab.preset ? 'true' : 'false'));
+        applyLabInputs(picked);
+        updateLab();
+    }
+
+    function updateLabFromLive() {
+        if (!state.lab.liveSnapshot) return;
+        applyLabInputs(state.lab.liveSnapshot);
+        document.querySelectorAll('.lab-chip').forEach(chip => chip.setAttribute('aria-pressed', chip.dataset.preset === 'live' ? 'true' : 'false'));
+        state.lab.preset = 'live';
+        updateLab();
     }
 
     // ===== Utility Functions =====
@@ -857,7 +1097,7 @@
 
         // Initialize components
         initCharts();
-        initSimulator();
+        bindLabControls();
         initKeyboardShortcuts();
 
         // Initial data fetch
@@ -866,6 +1106,7 @@
             fetchAllData(),
             fetchGateHistory()
         ]).then(() => {
+            updateLabFromLive();
             console.log('[Economics] Dashboard ready');
         }).catch(err => {
             console.error('[Economics] Initialization failed:', err);

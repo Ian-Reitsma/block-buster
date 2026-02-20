@@ -4,13 +4,13 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Economics & Gating · Block Buster</title>
-    <link rel="stylesheet" href="css/tailwind.min.css?v=20260212">
-    <link rel="stylesheet" href="dashboard.css?v=20260212">
-    <link rel="stylesheet" href="css/economics.css?v=20260212">
+    <link rel="stylesheet" href="css/tailwind.min.css?v=20260219">
+    <link rel="stylesheet" href="dashboard.css?v=20260219">
+    <link rel="stylesheet" href="css/economics.css?v=20260219">
     
     <!-- Core dependencies (blocking) -->
-    <script src="runtime-config.js?v=20260212"></script>
-    <script src="js/utils.js?v=20260212"></script>
+    <script src="runtime-config.js?v=20260219"></script>
+    <script src="js/utils.js?v=20260219"></script>
     
     <!-- Initialize API config and gate policy -->
     <script>
@@ -36,12 +36,12 @@
     </script>
     
     <!-- Shell and navigation (blocking for layout) -->
-    <script src="js/shell.js?v=20260212"></script>
-    <script src="js/nav.js?v=20260212"></script>
-    <script src="js/walkthrough.js?v=20260212" defer></script>
+    <script src="js/shell.js?v=20260219"></script>
+    <script src="js/nav.js?v=20260219"></script>
+    <script src="js/walkthrough.js?v=20260219" defer></script>
     
     <!-- Page-specific modules (deferred, loaded by boot.js) -->
-    <script src="js/boot.js?v=20260212" defer></script>
+    <script src="js/boot.js?v=20260219" defer></script>
 </head>
 <body class="font-display min-h-screen">
     <a href="#main-content" class="sr-only">Skip to content</a>
@@ -324,91 +324,169 @@
             </div>
         </section>
 
-        <!-- Interactive Issuance Simulator -->
-        <section class="panel-blade hologram-panel space-y-4" aria-labelledby="simulator-title">
+        <!-- Economics Lab v2 -->
+        <section class="panel-blade hologram-panel space-y-4" aria-labelledby="lab-title">
             <div class="panel-header">
                 <div>
-                    <h2 id="simulator-title" class="panel-title">Interactive Issuance Simulator</h2>
-                    <div class="panel-subtitle">Explore how network activity and decentralization affect adaptive monetary policy</div>
+                    <h2 id="lab-title" class="panel-title">Economics Lab</h2>
+                    <div class="panel-subtitle">Run scenarios against live issuance and gate readiness</div>
                 </div>
                 <div class="panel-actions">
-                    <button id="eco-sim-reset" class="micro-badge hover:bg-block-purple/20 transition-colors" aria-label="Reset simulator to live data">Reset to Live</button>
+                    <button id="eco-lab-reset" class="micro-badge hover:bg-block-purple/20 transition-colors" aria-label="Reset lab to live snapshot">Reset to Live</button>
                 </div>
             </div>
 
-            <!-- Simulator Controls -->
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-4">
-                <div class="space-y-3">
-                    <label class="flex items-center justify-between text-sm" for="eco-sim-txn">
-                        <span class="text-gray-300 flex items-center gap-2">
+            <!-- Presets & deltas -->
+            <div class="lab-presets" role="list" aria-label="Scenario presets">
+                <button class="lab-chip" data-preset="live" aria-pressed="true">Live Snapshot</button>
+                <button class="lab-chip" data-preset="surge">Throughput Surge</button>
+                <button class="lab-chip" data-preset="validator_drop">Validator Drop</button>
+                <button class="lab-chip" data-preset="bear">Bear Market</button>
+                <button class="lab-chip" data-preset="unlock_push">Unlock Push</button>
+            </div>
+            <div class="lab-deltas" aria-live="polite">
+                <span class="lab-delta" id="lab-delta-reward">Reward Δ: —</span>
+                <span class="lab-delta" id="lab-delta-inflation">Inflation Δ: —</span>
+                <span class="lab-delta" id="lab-delta-runway">Cap Runway Δ: —</span>
+            </div>
+
+            <!-- Controls: left column -->
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <div class="space-y-4">
+                    <div class="lab-control">
+                        <div class="lab-control__label">
                             <span>Transaction Volume</span>
                             <span class="tooltip text-gray-600" data-tooltip="Activity multiplier from tx volume">ⓘ</span>
-                        </span>
-                        <span id="eco-sim-txn-value" class="text-white font-semibold">1.0x</span>
-                    </label>
-                    <input type="range" id="eco-sim-txn" min="0.5" max="5" step="0.1" value="1.0" 
-                           class="simulator-slider w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer"
-                           aria-label="Transaction volume multiplier">
-                    <div class="flex justify-between text-xs text-gray-500">
-                        <span>0.5x</span>
-                        <span class="text-amber-500">Current</span>
-                        <span>5x</span>
+                            <span id="eco-sim-txn-value" class="lab-value">1.0x</span>
+                        </div>
+                        <input type="range" id="eco-sim-txn" min="0.5" max="5" step="0.1" value="1.0" class="simulator-slider w-full" aria-label="Transaction volume multiplier">
+                        <div class="lab-slider-meta"><span>0.5x</span><span class="lab-slider-dot">●</span><span>5x</span></div>
                     </div>
-                </div>
-                <div class="space-y-3">
-                    <label class="flex items-center justify-between text-sm" for="eco-sim-miners">
-                        <span class="text-gray-300 flex items-center gap-2">
+                    <div class="lab-control">
+                        <div class="lab-control__label">
                             <span>Unique Validators</span>
-                            <span class="tooltip text-gray-600" data-tooltip="Decentralization from miner count">ⓘ</span>
-                        </span>
-                        <span id="eco-sim-miners-value" class="text-white font-semibold">1000</span>
-                    </label>
-                    <input type="range" id="eco-sim-miners" min="100" max="10000" step="100" value="1000" 
-                           class="simulator-slider w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer"
-                           aria-label="Unique validator count">
-                    <div class="flex justify-between text-xs text-gray-500">
-                        <span>100</span>
-                        <span class="text-cyan-500">Current</span>
-                        <span>10K</span>
+                            <span class="tooltip text-gray-600" data-tooltip="Decentralization from validator count">ⓘ</span>
+                            <span id="eco-sim-miners-value" class="lab-value">1000</span>
+                        </div>
+                        <input type="range" id="eco-sim-miners" min="100" max="10000" step="100" value="1000" class="simulator-slider w-full" aria-label="Unique validator count">
+                        <div class="lab-slider-meta"><span>100</span><span class="lab-slider-dot">●</span><span>10,000</span></div>
+                    </div>
+                    <div class="lab-control">
+                        <div class="lab-control__label">
+                            <span>Block Time (ms)</span>
+                            <span class="tooltip text-gray-600" data-tooltip="Affects annual issuance via blocks/year">ⓘ</span>
+                            <span id="eco-sim-blocktime-value" class="lab-value">2000</span>
+                        </div>
+                        <input type="range" id="eco-sim-blocktime" min="500" max="3000" step="50" value="2000" class="simulator-slider w-full" aria-label="Average block time in milliseconds">
+                        <div class="lab-slider-meta"><span>500</span><span class="lab-slider-dot">●</span><span>3000</span></div>
+                    </div>
+                    <div class="lab-control">
+                        <div class="lab-control__label">
+                            <span>Mempool Fullness</span>
+                            <span class="tooltip text-gray-600" data-tooltip="Lab-only: pressure reduces readiness if too high">ⓘ</span>
+                            <span id="eco-sim-mempool-value" class="lab-value">50%</span>
+                        </div>
+                        <input type="range" id="eco-sim-mempool" min="0" max="100" step="5" value="50" class="simulator-slider w-full" aria-label="Mempool fullness percentage">
+                        <div class="lab-slider-meta"><span>0%</span><span class="lab-slider-dot">●</span><span>100%</span></div>
+                    </div>
+                    <div class="lab-control">
+                        <div class="lab-control__label">
+                            <span>Readiness Boost</span>
+                            <span class="tooltip text-gray-600" data-tooltip="Lab-only: apply ±20% heuristic readiness shift to preview gates">ⓘ</span>
+                            <span id="eco-sim-ready-value" class="lab-value">0%</span>
+                        </div>
+                        <input type="range" id="eco-sim-ready" min="-20" max="20" step="2" value="0" class="simulator-slider w-full" aria-label="Readiness boost percentage">
+                        <div class="lab-slider-meta"><span>-20%</span><span class="lab-slider-dot">●</span><span>+20%</span></div>
                     </div>
                 </div>
-            </div>
 
-            <!-- Simulator Output Metrics -->
-            <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
-                <div class="kpi metric-card">
-                    <div class="kpi-label">Projected Reward</div>
-                    <div id="eco-sim-reward" class="kpi-value amber-glow" aria-live="polite">—</div>
-                    <div class="kpi-meta">BLOCK per block</div>
-                </div>
-                <div class="kpi metric-card">
-                    <div class="kpi-label">Annual Inflation</div>
-                    <div id="eco-sim-inflation" class="kpi-value" aria-live="polite">—</div>
-                    <div class="kpi-meta">percentage</div>
-                </div>
-                <div class="kpi metric-card">
-                    <div class="kpi-label">Time to Cap</div>
-                    <div id="eco-sim-time-to-cap" class="kpi-value" aria-live="polite">—</div>
-                    <div class="kpi-meta">years remaining</div>
-                </div>
-            </div>
+                <!-- Outputs & visuals: right column -->
+                <div class="space-y-4">
+                    <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                        <div class="kpi metric-card">
+                            <div class="kpi-label">Projected Reward</div>
+                            <div id="eco-sim-reward" class="kpi-value amber-glow" aria-live="polite">—</div>
+                            <div class="kpi-meta">BLOCK per block</div>
+                        </div>
+                        <div class="kpi metric-card">
+                            <div class="kpi-label">Annual Inflation</div>
+                            <div id="eco-sim-inflation" class="kpi-value" aria-live="polite">—</div>
+                            <div class="kpi-meta">percentage</div>
+                        </div>
+                        <div class="kpi metric-card">
+                            <div class="kpi-label">Cap Runway</div>
+                            <div id="eco-sim-time-to-cap" class="kpi-value" aria-live="polite">—</div>
+                            <div class="kpi-meta">years remaining</div>
+                        </div>
+                    </div>
 
-            <!-- Formula Display -->
-            <div class="p-4 bg-gray-800/30 rounded-lg border border-gray-700/50 text-center">
-                <div class="text-xs text-gray-400 uppercase tracking-wider mb-2">Issuance Formula</div>
-                <div class="text-sm text-white font-mono">
-                    <span class="text-gray-400">reward =</span>
-                    <span class="text-amber-500">base</span> × 
-                    <span class="text-cyan-500" id="formula-activity">1.0</span> × 
-                    <span class="text-purple-500" id="formula-decentral">1.0</span> × 
-                    <span class="text-gray-400">decay</span>
-                </div>
-            </div>
+                    <!-- Factor impact bars -->
+                    <div class="lab-factor-card">
+                        <div class="lab-factor-header">
+                            <div>
+                                <div class="text-xs text-gray-400 uppercase tracking-wider">Reward Factor Impact</div>
+                                <div class="text-xs text-gray-500">Contribution of each multiplier vs live baseline</div>
+                            </div>
+                            <span class="micro-badge" id="lab-factor-baseline">Live baseline</span>
+                        </div>
+                        <div class="lab-factor-rows" role="list">
+                            <div class="lab-factor-row" role="listitem">
+                                <span>Activity</span><div class="lab-bar"><div id="lab-factor-activity" class="lab-bar-fill"></div></div><span id="lab-factor-activity-val" class="lab-bar-value">—</span>
+                            </div>
+                            <div class="lab-factor-row" role="listitem">
+                                <span>Decentralization</span><div class="lab-bar"><div id="lab-factor-decentral" class="lab-bar-fill"></div></div><span id="lab-factor-decentral-val" class="lab-bar-value">—</span>
+                            </div>
+                            <div class="lab-factor-row" role="listitem">
+                                <span>Decay</span><div class="lab-bar"><div id="lab-factor-decay" class="lab-bar-fill"></div></div><span id="lab-factor-decay-val" class="lab-bar-value">—</span>
+                            </div>
+                        </div>
+                    </div>
 
-            <!-- Simulator Chart -->
-            <div class="mt-4">
-                <div class="text-xs text-gray-400 uppercase tracking-wider mb-3">10-Year Supply Projection</div>
-                <canvas id="eco-sim-chart" height="140" aria-label="Supply projection chart"></canvas>
+                    <!-- Supply projection chart -->
+                    <div>
+                        <div class="text-xs text-gray-400 uppercase tracking-wider mb-2">10-Year Supply Projection (Live vs Scenario)</div>
+                        <canvas id="eco-sim-chart" height="140" aria-label="Supply projection chart"></canvas>
+                        <div class="text-xs text-gray-500 mt-1 flex gap-2">
+                            <span class="lab-legend live">Live</span>
+                            <span class="lab-legend scenario">Scenario</span>
+                        </div>
+                    </div>
+
+                    <!-- Supply runway table -->
+                    <div class="lab-table" aria-label="Supply runway table">
+                        <div class="lab-table-header">
+                            <span>Horizon</span><span>Minted</span><span>Remaining</span>
+                        </div>
+                        <div class="lab-table-row"><span>1y</span><span id="lab-runway-1y">—</span><span id="lab-remaining-1y">—</span></div>
+                        <div class="lab-table-row"><span>3y</span><span id="lab-runway-3y">—</span><span id="lab-remaining-3y">—</span></div>
+                        <div class="lab-table-row"><span>5y</span><span id="lab-runway-5y">—</span><span id="lab-remaining-5y">—</span></div>
+                        <div class="lab-table-row"><span>10y</span><span id="lab-runway-10y">—</span><span id="lab-remaining-10y">—</span></div>
+                    </div>
+
+                    <!-- Gate preview -->
+                    <div class="lab-gate-preview" aria-label="Gate preview cards">
+                        <div class="lab-gate-card" id="lab-gate-storage">
+                            <div class="lab-gate-title">Storage</div>
+                            <div class="lab-gate-bar"><div class="lab-gate-fill" id="lab-gate-storage-bar"></div></div>
+                            <div class="lab-gate-meta" id="lab-gate-storage-meta">—</div>
+                        </div>
+                        <div class="lab-gate-card" id="lab-gate-compute">
+                            <div class="lab-gate-title">Compute</div>
+                            <div class="lab-gate-bar"><div class="lab-gate-fill" id="lab-gate-compute-bar"></div></div>
+                            <div class="lab-gate-meta" id="lab-gate-compute-meta">—</div>
+                        </div>
+                        <div class="lab-gate-card" id="lab-gate-energy">
+                            <div class="lab-gate-title">Energy</div>
+                            <div class="lab-gate-bar"><div class="lab-gate-fill" id="lab-gate-energy-bar"></div></div>
+                            <div class="lab-gate-meta" id="lab-gate-energy-meta">—</div>
+                        </div>
+                        <div class="lab-gate-card" id="lab-gate-ads">
+                            <div class="lab-gate-title">Ads</div>
+                            <div class="lab-gate-bar"><div class="lab-gate-fill" id="lab-gate-ads-bar"></div></div>
+                            <div class="lab-gate-meta" id="lab-gate-ads-meta">—</div>
+                        </div>
+                    </div>
+                </div>
             </div>
         </section>
 

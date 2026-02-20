@@ -83,6 +83,13 @@ log_subscribers: set = set()
 log_buffer: List[Dict[str, Any]] = []
 
 
+def _port_in_use(host: str, port: int) -> bool:
+    """Return True if a TCP port is already bound."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        return sock.connect_ex((host, port)) == 0
+
+
 class LogBufferHandler(logging.Handler):
     def emit(self, record: logging.LogRecord) -> None:
         entry = {
@@ -121,6 +128,48 @@ def _load_wallet_record() -> Dict[str, Any]:
             return {"address": _WALLET_FILE.read_text().strip()}
         except Exception:  # pragma: no cover - best effort
             return {}
+
+
+def _wallet_summary(client: TheBlockClient) -> Dict[str, Any]:
+    """Summarise wallet status without assuming node connectivity."""
+    record = _load_wallet_record()
+    addr = record.get("address") or record.get("wallet")
+    has_secret = _resolve_wallet_secret() is not None
+    if not addr:
+        return {"connected": False, "needs_funding": True, "has_secret": has_secret}
+
+    # If we're intentionally offline, avoid RPC calls.
+    if getattr(client.config, "offline", False):
+        return {
+            "connected": False,
+            "wallet": addr,
+            "has_secret": has_secret,
+            "needs_funding": True,
+            "offline": True,
+        }
+
+    try:
+        balance = client.ledger.get_balance(addr)
+        amount = getattr(balance, "balance", 0)
+        return {
+            "connected": True,
+            "wallet": addr,
+            "balance_block": amount,
+            "balance": amount,
+            "funded": amount > 0,
+            "needs_funding": amount <= 0,
+            "block_height": getattr(balance, "block_height", None),
+            "has_secret": has_secret,
+        }
+    except Exception as exc:  # pragma: no cover - defensive
+        return {
+            "connected": True,
+            "wallet": addr,
+            "funded": False,
+            "needs_funding": True,
+            "has_secret": has_secret,
+            "error": str(exc),
+        }
     return {}
 
 
@@ -211,6 +260,34 @@ async def collect_dashboard_data() -> Dict[str, Any]:
     try:
         client = the_block_client
         integration = the_block_integration
+
+        # Offline mode short-circuit: avoid RPC calls and emit a minimal snapshot
+        # so the UI can render without spamming connection-refused warnings.
+        if getattr(client.config, "offline", False):
+            return {
+                "network": {
+                    "status": "Offline",
+                    "block_height": None,
+                    "finalized_height": None,
+                    "blocks_until_finality": None,
+                    "block_time_ms": None,
+                    "tps": None,
+                    "connected_peers": 0,
+                    "timestamp": int(time.time() * 1000),
+                    "uptime_seconds": int(time.time() - PROCESS_START),
+                    "genesis_ready": False,
+                    "network_strength": 0,
+                },
+                "governor": {"gates": {}, "mode": "offline"},
+                "markets": [],
+                "providers": [],
+                "features": {},
+                "wallet": _wallet_summary(client),
+                "operations": [],
+                "receipts": [],
+                "posterior": {},
+                "state": {},
+            }
 
         node_info = client.get_node_info()
         try:
@@ -1432,6 +1509,33 @@ def start_dashboard_server(
 ) -> None:
     """Start HTTP + WebSocket servers with background integration."""
     init_dashboard_server()
+
+    # Allow preselected ports to move if already bound, so offline users can
+    # restart quickly without killing orphaned processes.
+    forbidden = set()
+    def _find_open(start: int) -> int:
+        port = start
+        for _ in range(64):
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                if sock.connect_ex(("0.0.0.0", port)) != 0:
+                    return port
+            port += 1
+        raise RuntimeError("Unable to find a free port")
+
+    if _port_in_use(http_host, http_port):
+        http_port = _find_open(http_port + 1)
+        logger.warning("HTTP port busy; shifted to :%s", http_port)
+    forbidden.add(http_port)
+
+    if ws_port in forbidden or _port_in_use(ws_host, ws_port):
+        ws_port = _find_open(http_port + 1)
+        logger.warning("WS port busy; shifted to :%s", ws_port)
+    forbidden.add(ws_port)
+
+    if feature_ws_port is None or feature_ws_port in forbidden or _port_in_use(ws_host, feature_ws_port):
+        feature_ws_port = _find_open(ws_port + 1)
+        logger.warning("Feature WS port busy; shifted to :%s", feature_ws_port)
 
     def _pick_open_port(preferred: int, forbidden: set[int]) -> int:
         """Find an open port, skipping forbidden ones."""

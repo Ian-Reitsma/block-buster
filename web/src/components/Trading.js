@@ -7,6 +7,7 @@ import appState from '../state.js';
 import { fmt, $ } from '../utils.js';
 import perf from '../perf.js';
 import mockDataManager from '../mock-data-manager.js';
+import features from '../features.js';
 import OrderBookDepthChart from './OrderBookDepthChart.js';
 
 class Trading extends Component {
@@ -18,17 +19,19 @@ class Trading extends Component {
     this.orderBookData = null;
     this.depthChart = null;
     this.connectionMode = 'DETECTING';
+    this.orderBookSource = 'unknown';
   }
 
   async onMount() {
     this.container = $('#app');
     this.render();
 
-    // Detect node connection (5 second timeout)
-    const isLive = await mockDataManager.detectNode(5000);
-    this.connectionMode = isLive ? 'LIVE' : 'MOCK';
-    
-    // Update connection indicator
+    // Mirror global connection mode (set by main.js + mockDataManager)
+    this.connectionMode = appState.get('connectionMode') || 'DETECTING';
+    this.subscribe(appState, 'connectionMode', (mode) => {
+      this.connectionMode = mode;
+      this.updateConnectionIndicator();
+    });
     this.updateConnectionIndicator();
 
     // Subscribe to app state updates
@@ -68,6 +71,7 @@ class Trading extends Component {
         <div id="connection-indicator" class="connection-indicator">
           <span class="connection-dot DETECTING"></span>
           <span class="connection-label">Detecting node...</span>
+          <span id="sim-badge" class="pill pill-muted" style="margin-left: var(--space-2); display: none;">Simulated</span>
         </div>
       </div>
     `;
@@ -231,20 +235,30 @@ class Trading extends Component {
    */
   async fetchOrderBook() {
     try {
-      if (mockDataManager.isLiveMode()) {
-        // Fetch from RPC
-        const data = await this.rpc.call('dex.order_book', {
-          pair: 'BLOCK/USD',
-          depth: 20,
-        });
-        this.orderBookData = data;
-        appState.set('orderBook', data);
-      } else {
-        // Get from mock data manager (formula-based)
-        const data = mockDataManager.get('orderBook');
-        this.orderBookData = data;
-        appState.set('orderBook', data);
+      // Wait until connection mode resolved
+      if ((appState.get('connectionMode') || 'DETECTING') === 'DETECTING') return;
+
+      // LIVE nodes do not expose a DEX order book; force mock fallback
+      if (mockDataManager.isLiveMode() && features.isEnabled('dex_live_order_book')) {
+        try {
+          const data = await this.rpc.call('dex.order_book', {
+            pair: 'BLOCK/USD',
+            depth: 20,
+          });
+          this.orderBookData = data;
+          this.orderBookSource = 'live';
+          appState.set('orderBook', data);
+          return;
+        } catch (e) {
+          console.warn('[Trading] dex.order_book unavailable, falling back to simulated depth', e?.message || e);
+        }
       }
+
+      // Simulated fallback
+      const data = mockDataManager.get('orderBook');
+      this.orderBookData = data;
+      this.orderBookSource = mockDataManager.isLiveMode() ? 'mock-fallback' : 'mock';
+      appState.set('orderBook', data);
     } catch (error) {
       console.error('[Trading] Failed to fetch order book:', error);
     }
@@ -500,11 +514,23 @@ class Trading extends Component {
       dot.className = `connection-dot ${this.connectionMode}`;
       
       if (this.connectionMode === 'LIVE') {
-        label.textContent = 'Connected to Node';
+        if (this.orderBookSource === 'mock-fallback') {
+          label.textContent = 'Node connected (order book not exposed; using mock depth)';
+        } else {
+          label.textContent = 'Connected to Node';
+        }
       } else if (this.connectionMode === 'MOCK') {
         label.textContent = 'Demo Mode (Formula-Based)';
       } else {
         label.textContent = 'Detecting node...';
+      }
+
+      // Simulated badge
+      const badge = $('#sim-badge');
+      if (badge) {
+        const simulated = this.orderBookSource !== 'live';
+        badge.style.display = simulated ? 'inline-flex' : 'none';
+        badge.textContent = simulated ? 'Simulated' : '';
       }
     }
   }

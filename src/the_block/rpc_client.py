@@ -88,6 +88,11 @@ class RPCClient:
             RPCError: On JSON-RPC error response
             HTTPError: On HTTP-level errors
         """
+        if getattr(self.config, "offline", False):
+            # In offline mode we intentionally skip network calls to avoid
+            # connection-refused spam when no node is running.
+            raise RPCError(-32000, "RPC disabled (offline mode)")
+
         self._request_id += 1
         request_id = self._request_id
         

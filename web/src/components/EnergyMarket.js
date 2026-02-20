@@ -775,7 +775,6 @@ class EnergyMarket extends Component {
 
   showNotification(message, type = 'info') {
     // Simple notification system - could be enhanced with a toast component
-    const className = type === 'success' ? 'success' : type === 'error' ? 'danger' : 'info';
     console.log(`[Notification ${type.toUpperCase()}]`, message);
     
     // Could add visual toast notification here

@@ -255,8 +255,8 @@ describe('RpcClient', () => {
       expect(mockApiClient.post).toHaveBeenCalledWith(
         '/rpc',
         expect.objectContaining({
-          method: 'ledger.balance',
-          params: ['0x123'],
+          method: 'balance',
+          params: [{ address: '0x123' }],
         }),
       );
     });
@@ -377,13 +377,14 @@ describe('RpcClient', () => {
   describe('helper methods', () => {
     it('should get dashboard metrics via batch call', async () => {
       const mockBatchResponse = [
-        { jsonrpc: '2.0', result: { height: 12345, finalized_height: 12340 }, id: 1 },
-        { jsonrpc: '2.0', result: { tps: 1250, avgBlockTime: 2.1 }, id: 2 },
-        { jsonrpc: '2.0', result: { total: 64, active: 58, avgLatency: 22 }, id: 3 },
-        { jsonrpc: '2.0', result: { queue_size: 10 }, id: 4 },
-        { jsonrpc: '2.0', result: { active_gates: 3 }, id: 5 },
-        { jsonrpc: '2.0', result: { validators: [{ id: 'v1' }] }, id: 6 },
-        { jsonrpc: '2.0', result: { analytics: { throughput: 1000 } }, id: 7 },
+        { jsonrpc: '2.0', result: { height: 12345 }, id: 1 }, // consensus.block_height
+        { jsonrpc: '2.0', result: { finalized_height: 12340 }, id: 2 }, // consensus.finality_status
+        { jsonrpc: '2.0', result: { tps: 1250, avg_block_time_ms: 2100 }, id: 3 }, // consensus.stats
+        { jsonrpc: '2.0', result: { active_peers: 58, persisted_peers: 64 }, id: 4 }, // net.overlay_status
+        { jsonrpc: '2.0', result: [{ peer_id: 'p1' }], id: 5 }, // net.peer_stats_all
+        { jsonrpc: '2.0', result: { queue_size: 10 }, id: 6 }, // compute_market.scheduler_stats
+        { jsonrpc: '2.0', result: { active_gates: 3 }, id: 7 }, // governor.status
+        { jsonrpc: '2.0', result: { throughput: 1000 }, id: 8 }, // analytics
       ];
 
       mockApiClient.post.mockResolvedValue(mockBatchResponse);
@@ -395,7 +396,7 @@ describe('RpcClient', () => {
       expect(result.tps).toBe(1250);
       expect(result.peers).toBe(64);
       expect(result.activePeers).toBe(58);
-      expect(result.avgLatency).toBe(22);
+      expect(result.avgLatency).toBe(0);
       expect(result.schedulerQueueSize).toBe(10);
       expect(result.governorActiveGates).toBe(3);
       expect(result.errors).toEqual([]);
@@ -403,13 +404,14 @@ describe('RpcClient', () => {
 
     it('should handle partial errors in dashboard metrics', async () => {
       const mockBatchResponse = [
-        { jsonrpc: '2.0', result: { height: 12345, finalized_height: 12340 }, id: 1 },
-        { jsonrpc: '2.0', error: { code: -32600, message: 'TPS unavailable' }, id: 2 },
-        { jsonrpc: '2.0', result: { total: 64 }, id: 3 },
-        { jsonrpc: '2.0', result: { queue_size: 10 }, id: 4 },
-        { jsonrpc: '2.0', result: { active_gates: 3 }, id: 5 },
-        { jsonrpc: '2.0', result: { validators: [] }, id: 6 },
-        { jsonrpc: '2.0', result: { analytics: {} }, id: 7 },
+        { jsonrpc: '2.0', result: { height: 12345 }, id: 1 },
+        { jsonrpc: '2.0', result: { finalized_height: 12340 }, id: 2 },
+        { jsonrpc: '2.0', error: { code: -32600, message: 'TPS unavailable' }, id: 3 },
+        { jsonrpc: '2.0', result: { active_peers: 64 }, id: 4 },
+        { jsonrpc: '2.0', result: [{ peer_id: 'p1' }], id: 5 },
+        { jsonrpc: '2.0', result: { queue_size: 10 }, id: 6 },
+        { jsonrpc: '2.0', result: { active_gates: 3 }, id: 7 },
+        { jsonrpc: '2.0', result: {}, id: 8 },
       ];
 
       mockApiClient.post.mockResolvedValue(mockBatchResponse);
@@ -424,9 +426,11 @@ describe('RpcClient', () => {
 
     it('should get network overview via batch call', async () => {
       const mockBatchResponse = [
-        { jsonrpc: '2.0', result: { peers: [{ id: 'p1' }] }, id: 1 },
-        { jsonrpc: '2.0', result: { total: 64 }, id: 2 },
-        { jsonrpc: '2.0', result: { validators: [{ id: 'v1' }] }, id: 3 },
+        { jsonrpc: '2.0', result: [{ peer_id: 'p1' }], id: 1 },
+        { jsonrpc: '2.0', result: { active_peers: 58, persisted_peers: 64 }, id: 2 },
+        { jsonrpc: '2.0', result: { height: 100 }, id: 3 },
+        { jsonrpc: '2.0', result: { finalized_height: 95 }, id: 4 },
+        { jsonrpc: '2.0', result: { tps: 500, avg_block_time_ms: 2000 }, id: 5 },
       ];
 
       mockApiClient.post.mockResolvedValue(mockBatchResponse);
@@ -435,7 +439,7 @@ describe('RpcClient', () => {
 
       expect(result.peers).toHaveLength(1);
       expect(result.stats.total).toBe(64);
-      expect(result.validators).toHaveLength(1);
+      expect(result.validators).toHaveLength(0);
     });
 
     it('should get market states via batch call', async () => {

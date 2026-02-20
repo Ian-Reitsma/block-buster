@@ -152,7 +152,7 @@ class SelectionPanel extends Component {
   }
 
   selectAll(data) {
-    data.forEach((item, index) => {
+    data.forEach((item, _index) => {
       const rowId = this.getRowId(item);
       this.selectedItems.add(rowId);
       this.updateRowState(rowId, true);
