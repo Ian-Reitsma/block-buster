@@ -11,6 +11,7 @@
 
 import { Component } from '../lifecycle.js';
 import appState from '../state.js';
+import { Capabilities } from '../capabilities.js';
 import DataTable from './DataTable.js';
 import Modal from './Modal.js';
 import { fmt, $ } from '../utils.js';
@@ -140,7 +141,10 @@ class Treasury extends Component {
     this.renderActiveView();
 
     const disbursementBtn = $('#new-disbursement-btn');
-    if (disbursementBtn) this.listen(disbursementBtn, 'click', () => this.showDisbursementModal());
+    if (disbursementBtn) {
+      this.listen(disbursementBtn, 'click', () => this.showDisbursementModal());
+      Capabilities.bindButton(disbursementBtn, 'global', 'mutation');
+    }
 
     const auditBtn = $('#audit-treasury-btn');
     if (auditBtn) this.listen(auditBtn, 'click', () => this.showAuditModal());
@@ -276,7 +280,7 @@ class Treasury extends Component {
           }},
           { key: 'created_at', label: 'Created', sortable: true, format: 'datetime' },
         ],
-         disbursements,
+          disbursements,
         selectable: true,
         pageSize: 50,
         rowActions: [
@@ -317,7 +321,7 @@ class Treasury extends Component {
           { key: 'counterparty', label: 'Counterparty', sortable: true, filterable: true },
           { key: 'timestamp', label: 'Timestamp', sortable: true, format: 'datetime' },
         ],
-         transactions,
+          transactions,
         selectable: true,
         pageSize: 100,
         rowActions: [
@@ -405,6 +409,7 @@ class Treasury extends Component {
 
       const submitBtn = $('#submit-disbursement');
       if (submitBtn) {
+        Capabilities.bindButton(submitBtn, 'global', 'mutation');
         submitBtn.addEventListener('click', async () => {
           await this.createDisbursement();
           modal.close();
@@ -432,6 +437,11 @@ class Treasury extends Component {
   }
 
   async createDisbursement() {
+    const check = Capabilities.canPerformAction('global', 'mutation');
+    if (!check.allowed) {
+      this.showNotification(check.reason, 'error');
+      return;
+    }
     const form = $('#disbursement-form');
     if (!form) return;
 
@@ -489,6 +499,11 @@ class Treasury extends Component {
   }
 
   async approveDisbursement(disbursement) {
+    const check = Capabilities.canPerformAction('global', 'settlement');
+    if (!check.allowed) {
+      this.showNotification(check.reason, 'error');
+      return;
+    }
     if (!confirm(`Approve disbursement #${disbursement.id} for ${fmt.currency(disbursement.amount)} BLOCK?`)) return;
 
     try {
@@ -506,6 +521,11 @@ class Treasury extends Component {
   }
 
   async rejectDisbursement(disbursement) {
+    const check = Capabilities.canPerformAction('global', 'settlement');
+    if (!check.allowed) {
+      this.showNotification(check.reason, 'error');
+      return;
+    }
     const reason = prompt('Enter rejection reason:');
     if (!reason) return;
 

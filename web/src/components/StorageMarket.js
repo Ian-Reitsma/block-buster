@@ -15,6 +15,7 @@ import DataTable from './DataTable.js';
 import Modal from './Modal.js';
 import { fmt, $ } from '../utils.js';
 import perf from '../perf.js';
+import { Capabilities } from '../capabilities.js';
 
 class StorageMarket extends Component {
   constructor(rpc) {
@@ -132,10 +133,16 @@ class StorageMarket extends Component {
     this.renderActiveView();
 
     const uploadBtn = $('#upload-file-btn');
-    if (uploadBtn) this.listen(uploadBtn, 'click', () => this.showUploadModal());
+    if (uploadBtn) {
+      Capabilities.bindButton(uploadBtn, 'storage', 'mutation');
+      this.listen(uploadBtn, 'click', () => this.showUploadModal());
+    }
 
     const escrowBtn = $('#rent-escrow-btn');
-    if (escrowBtn) this.listen(escrowBtn, 'click', () => this.showEscrowModal());
+    if (escrowBtn) {
+      Capabilities.bindButton(escrowBtn, 'storage', 'settlement');
+      this.listen(escrowBtn, 'click', () => this.showEscrowModal());
+    }
   }
 
   renderActiveView() {
@@ -223,7 +230,7 @@ class StorageMarket extends Component {
           { key: 'rent_paid_until', label: 'Rent Paid Until', sortable: true, format: 'date' },
           { key: 'provider', label: 'Provider', sortable: true, filterable: true },
         ],
-         files,
+          files,
         selectable: true,
         pageSize: 50,
         rowActions: [
@@ -271,7 +278,7 @@ class StorageMarket extends Component {
             return `<span class="pill ${statusClass}">${val}</span>`;
           }},
         ],
-         providers,
+          providers,
         selectable: true,
         pageSize: 25,
         rowActions: [
@@ -360,6 +367,7 @@ class StorageMarket extends Component {
 
       const submitBtn = $('#submit-upload');
       if (submitBtn) {
+        Capabilities.bindButton(submitBtn, 'storage', 'mutation');
         submitBtn.addEventListener('click', async () => {
           await this.uploadFile();
           modal.close();
@@ -402,6 +410,7 @@ class StorageMarket extends Component {
 
       const submitBtn = $('#submit-escrow');
       if (submitBtn) {
+        Capabilities.bindButton(submitBtn, 'storage', 'settlement');
         submitBtn.addEventListener('click', async () => {
           await this.manageEscrow();
           modal.close();

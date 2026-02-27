@@ -1,9 +1,13 @@
 // Block Buster Dashboard - First-party, zero-dependency SPA
 // Architecture: Observable state + lifecycle management + declarative rendering
 
+import './styles/trading.css';
+import './styles/economics.css';
+
 import appState from './state.js';
 import RpcClient from './rpc.js';
 import MockRpcClient from './rpc-mock.js';
+import { RPC_COMPAT, probeRpcMethods } from './rpc-compat.js';
 import Router from './router.js';
 import Navigation from './components/Navigation.js';
 import ConnectionStatus from './components/ConnectionStatus.js';
@@ -28,13 +32,14 @@ import { $ } from './utils.js';
 import mockDataManager from './mock-data-manager.js';
 
 // Configuration
-const API_BASE = window.BLOCK_BUSTER_API || 'http://localhost:5000';
-const WS_URL = window.BLOCK_BUSTER_WS || 'ws://localhost:5000/ws';
-const HEALTH_URL = window.BLOCK_BUSTER_HEALTH || `${API_BASE}/health`;
+const API_BASE = window.BLOCK_BUSTER_API ?? '';
+const WS_URL = window.BLOCK_BUSTER_WS ?? `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}/ws`;
+const HEALTH_URL = window.BLOCK_BUSTER_HEALTH ?? `${API_BASE}/health`;
 
 // Initialize RPC client (real or mock based on feature flag and backend availability)
 let rpc;
 let backendAvailable = false;
+let _launchModePoll = null;
 
 function initializeRpcClient(forceMock = false) {
   // Check if mock mode is forced or enabled
@@ -96,6 +101,7 @@ function initializeState() {
   appState.set('offline', false);
   appState.set('route', router.getCurrentPath());
   appState.set('connectionMode', 'DETECTING');
+  appState.set('launch_mode', 'trade');
 
   // Mock data for initial render (will be replaced by API calls)
   appState.set('metrics', {
@@ -184,6 +190,57 @@ function updateOfflineBanner(isOffline) {
 
       document.body.insertBefore(banner, document.body.firstChild);
     }
+  } else {
+    if (banner) {
+      banner.remove();
+    }
+  }
+}
+
+// Launch Mode banner management
+function initializeLaunchModeBanner() {
+  appState.subscribe('launch_mode', (mode) => {
+    requestAnimationFrame(() => updateLaunchModeBanner(mode));
+  });
+
+  // Start polling governor status to drive global launch mode
+  if (_launchModePoll) clearInterval(_launchModePoll);
+  _launchModePoll = setInterval(async () => {
+    if (rpc) {
+      try {
+        const gov = await rpc.getGovernorStatus();
+        if (gov) {
+          // Store full governor status snapshot for per-market gates + capabilities.
+          appState.set('governorStatus', gov);
+          if (gov.launch_mode) {
+            appState.set('launch_mode', gov.launch_mode);
+          }
+        }
+      } catch (e) {
+        // ignore fetch failures
+      }
+    }
+  }, 5000);
+}
+
+function updateLaunchModeBanner(mode) {
+  let banner = $('#launch-mode-banner');
+  const isRestricted = mode && mode !== 'trade';
+
+  if (isRestricted) {
+    if (!banner) {
+      banner = document.createElement('div');
+      banner.id = 'launch-mode-banner';
+      // Use existing banner styles but tint warning orange
+      banner.className = 'offline-banner';
+      banner.style.backgroundColor = 'var(--warning, #b7791f)';
+      banner.style.color = '#fff';
+      banner.style.borderBottom = '1px solid rgba(0,0,0,0.2)';
+      document.body.insertBefore(banner, document.body.firstChild);
+    }
+    banner.innerHTML = `
+      <span>⚠️ <strong>NETWORK PHASE RESTRICTION:</strong> The network is currently in <strong>${mode.toUpperCase()}</strong> mode. Settlement and destructive actions are disabled.</span>
+    `;
   } else {
     if (banner) {
       banner.remove();
@@ -294,28 +351,20 @@ async function init() {
   // Initialize subsystems
   initializeState();
   initializeOfflineBanner();
+  initializeLaunchModeBanner();
   initializePerformanceMonitoring();
   initializeErrorReporting();
   initializeFeatureFlags();
   initializeStateDebugging();
   
-  // Check API health first (before showing UI)
-  backendAvailable = await mockDataManager.detectNode(5000);
+  // Check API health first (keep this short so the UI never feels “hung”)
+  backendAvailable = await mockDataManager.detectNode(1500);
   console.log(`[App] Backend status: ${backendAvailable ? 'CONNECTED' : 'UNAVAILABLE'}`);
-  
-  // If backend unavailable and not in mock mode, show interstitial
+
+  // If backend is unavailable, force mock mode immediately (no blocking interstitial)
   if (!backendAvailable && !features.isEnabled('mock_rpc')) {
-    console.log('[App] Backend unavailable - showing mock mode interstitial');
-    
-    // Show interstitial screen and wait for user action
-    await new Promise((resolve) => {
-      mockModeNotice.showInterstitial(() => {
-        // User clicked "Continue with Mock Data"
-        features.enable('mock_rpc');
-        console.log('[App] Mock mode enabled with realistic blockchain data');
-        resolve();
-      });
-    });
+    console.log('[App] Backend unavailable - enabling mock mode');
+    features.enable('mock_rpc');
   }
   
   // Initialize RPC client (real or mock based on backend availability)
@@ -333,6 +382,24 @@ async function init() {
     }, 1500);
   }
   
+  // Probe RPC compatibility early so missing method surfaces become explicit UI state.
+  // This is a "best effort" probe; failures should not hard-crash the app.
+  try {
+    const base = RPC_COMPAT.REQUIRED_METHODS;
+    const optional = Object.values(RPC_COMPAT.OPTIONAL_METHODS).flat();
+    const methodsToProbe = Array.from(new Set([...base, ...optional]));
+    const probe = await probeRpcMethods(rpc, methodsToProbe, 2500);
+    appState.set('rpcCompat', {
+      as_of_ms: Date.now(),
+      probe,
+    });
+  } catch (e) {
+    appState.set('rpcCompat', {
+      as_of_ms: Date.now(),
+      probe_error: String(e?.message || e),
+    });
+  }
+
   // Initialize components with RPC client
   components.theblock = new TheBlock(rpc);
   components.energyMarket = new EnergyMarket(rpc);
@@ -390,6 +457,7 @@ async function init() {
 
   // Global cleanup on page unload
   window.addEventListener('beforeunload', () => {
+    if (_launchModePoll) clearInterval(_launchModePoll);
     console.log('[App] Unmounting all components...');
     if (websocket) websocket.unmount();
     router.unmount();
@@ -432,5 +500,3 @@ if (window.location.hostname === 'localhost') {
   console.log('[Dev] Exposed: window.perf, window.router, window.rpc, window.ws');
   console.log('[Dev] Helpers: window.enableMockMode(), window.disableMockMode()');
 }
-import './styles/trading.css';
-import './styles/economics.css';

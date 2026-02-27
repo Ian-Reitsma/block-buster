@@ -7,6 +7,26 @@
  * - Receipt Audit Interface
  */
 
+/* Hard-disable horizontal scrolling for the economics tab strip.
+ * The tabs must wrap (app-like) and never create a horizontal scrollbar.
+ */
+.economics-dashboard {
+  overflow-x: hidden;
+}
+
+.economics-dashboard .tabs {
+  flex-wrap: wrap !important;
+  overflow-x: hidden !important;
+  overflow-y: visible !important;
+  max-width: 100%;
+}
+
+.economics-dashboard .tab {
+  white-space: normal !important;
+  min-width: 0;
+  flex: 1 1 180px;
+}
+
 /* Network Issuance Chart */
 .network-issuance-chart {
   padding: 2rem;
@@ -940,4 +960,153 @@
   .formula-line {
     flex-direction: column;
   }
+}
+
+/* ── Economics Lab Layout Revamp ───────────────────────────────────────────── */
+.economics-lab .lab-grid {
+  display: grid;
+  grid-template-columns: 320px 1fr;
+  gap: 2rem;
+  align-items: start;
+}
+
+.economics-lab .lab-sidebar {
+  position: sticky;
+  top: 2rem;
+  max-height: calc(100vh - 4rem);
+  overflow-y: auto;
+  padding-right: 0.5rem;
+}
+
+.economics-lab .lab-main { min-width: 0; }
+
+/* Controls layout */
+.economics-lab .lab-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.economics-lab .lab-subgrid {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin-top: 0.5rem;
+}
+
+/* Numeric stepper */
+.economics-lab .lab-input-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.5rem;
+}
+
+.economics-lab .lab-input-label {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--text-muted, #888);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.economics-lab .value-display {
+  font-size: 0.75rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  color: var(--accent, #00ff88);
+}
+
+.economics-lab .tooltip-icon {
+  cursor: help;
+  opacity: 0.65;
+  font-size: 0.75rem;
+  background: rgba(255, 255, 255, 0.10);
+  border-radius: 999px;
+  width: 16px;
+  height: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  user-select: none;
+}
+
+/* ── Custom tooltip (replaces native title — unclipped by overflow) ── */
+.tooltip-icon {
+  position: relative;
+}
+
+.tooltip-icon::after {
+  content: attr(data-tooltip);
+  position: fixed;
+  bottom: auto;
+  left: auto;
+  transform: translateY(-110%);
+  background: var(--surface-1, #1a1a1a);
+  color: var(--text, rgba(255,255,255,0.85));
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 1.5;
+  padding: 6px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border, rgba(255,255,255,0.1));
+  white-space: pre-wrap;
+  width: max-content;
+  max-width: 260px;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+  z-index: 9999;
+  font-family: Inter, system-ui, sans-serif;
+  text-align: left;
+}
+
+.tooltip-icon:hover::after {
+  opacity: 1;
+}
+
+.economics-lab .numeric-stepper {
+  display: flex;
+  align-items: stretch;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border, #333);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.economics-lab .numeric-stepper button {
+  background: transparent;
+  border: 0;
+  color: var(--text-muted, #888);
+  padding: 0.5rem 0.75rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.economics-lab .numeric-stepper button:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: white;
+}
+
+.economics-lab .numeric-stepper input[type="number"]{
+  flex: 1;
+  border: 0;
+  background: transparent;
+  color: white;
+  text-align: center;
+  padding: 0.5rem;
+  font-weight: 700;
+  font-size: 0.875rem;
+  -moz-appearance: textfield;
+}
+
+.economics-lab .numeric-stepper input::-webkit-outer-spin-button,
+.economics-lab .numeric-stepper input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+@media (max-width: 1024px) {
+  .economics-lab .lab-grid { grid-template-columns: 1fr; }
+  .economics-lab .lab-sidebar { position: static; max-height: none; padding-right: 0; }
 }

@@ -47,17 +47,23 @@ class Economics extends Component {
     // Navigation tabs
     const tabs = document.createElement('nav');
     tabs.className = 'tabs';
+    // Wrap (no horizontal scrollbar)
+    tabs.style.display = 'flex';
+    tabs.style.flexWrap = 'wrap';
+    tabs.style.overflowX = 'hidden';
+    tabs.style.overflowY = 'visible';
+    tabs.style.gap = '8px';
     tabs.innerHTML = `
-      <button class="tab ${this.activeTab === 'issuance' ? 'active' : ''}" data-tab="issuance">
+      <button class="tab ${this.activeTab === 'issuance' ? 'active' : ''}" data-tab="issuance" style="white-space:normal; flex: 1 1 180px;">
         💰 Network Issuance
       </button>
-      <button class="tab ${this.activeTab === 'control-laws' ? 'active' : ''}" data-tab="control-laws">
+      <button class="tab ${this.activeTab === 'control-laws' ? 'active' : ''}" data-tab="control-laws" style="white-space:normal; flex: 1 1 180px;">
         ⚙️ Control Laws
       </button>
-      <button class="tab ${this.activeTab === 'receipts' ? 'active' : ''}" data-tab="receipts">
+      <button class="tab ${this.activeTab === 'receipts' ? 'active' : ''}" data-tab="receipts" style="white-space:normal; flex: 1 1 180px;">
         📄 Receipt Audit
       </button>
-      <button class="tab ${this.activeTab === 'simulator' ? 'active' : ''}" data-tab="simulator">
+      <button class="tab ${this.activeTab === 'simulator' ? 'active' : ''}" data-tab="simulator" style="white-space:normal; flex: 1 1 180px;">
         🧪 Economics Lab
       </button>
     `;

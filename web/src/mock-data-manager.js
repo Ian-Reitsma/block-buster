@@ -10,19 +10,79 @@
  */
 
 import appState from './state.js';
+import { CONSTANTS, computeIssuance } from './EconomicsEngine.js';
+
+// ── Block capacity constants — mirrors node/src/receipts_validation.rs ────────────────────────
+// These are protocol constants derived from block execution budgets (NOT configurable knobs).
+// Dashboard uses them to compute TPS utilization percentages accurately in mock mode.
+// Must stay in sync with receipts_validation.rs if those values ever change.
+//
+//   RECEIPT_BYTE_BUDGET    = 10_000_000  (10 MB/block — bandwidth + storage pressure limit)
+//   RECEIPT_VERIFY_BUDGET  = 100_000     (verify-units/block — deterministic CPU budget)
+//   MIN_RECEIPT_BYTE_FLOOR = 1_000       (min encoded bytes per receipt)
+//   MIN_RECEIPT_VERIFY_UNITS = 10        (min verify-units per receipt)
+//   HARD_RECEIPT_CEILING   = 50_000      (absolute fuse — never exceeded)
+//
+// MAX_RECEIPTS_PER_BLOCK = min(10_000_000/1_000, 100_000/10, 50_000) = 10,000
+// BLOCK_MAX_TPS          = 10,000 receipts/block ÷ 1s/block = 10,000 TPS
+// BLOCK_TARGET_TPS       = 10,000 × 0.60 (EIP-1559 controller target fraction) = 6,000 TPS
+const _RECEIPT_BYTE_BOUND   = Math.floor(10_000_000 / 1_000);   // 10,000
+const _RECEIPT_VERIFY_BOUND = Math.floor(100_000    / 10);       // 10,000
+const BLOCK_MAX_RECEIPTS    = Math.min(_RECEIPT_BYTE_BOUND, _RECEIPT_VERIFY_BOUND, 50_000); // 10,000
+const BLOCK_MAX_TPS         = BLOCK_MAX_RECEIPTS;                // 10,000 (at 1s block cadence)
+const BLOCK_TARGET_TPS      = Math.round(BLOCK_MAX_TPS * 0.60); //  6,000 (fee controller target)
+
+// ── Deterministic RNG for Mock Data ──────────────────────────────────────────
+function mulberry32(seed) {
+  let a = seed >>> 0;
+  return function() {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+const SCENARIOS = {
+  NONE:      { tpsMul: 1.0, utilMul: 1.0, feeMul: 1.0, outagePpm: 0,      spamMul: 1.0, priceVolMul: 1.0 },
+  STRESS:    { tpsMul: 2.5, utilMul: 1.4, feeMul: 1.8, outagePpm: 0,      spamMul: 2.0, priceVolMul: 1.5 },
+  OUTAGE:    { tpsMul: 0.2, utilMul: 0.6, feeMul: 0.7, outagePpm: 80_000, spamMul: 1.0, priceVolMul: 2.0 },
+  ATTACK:    { tpsMul: 3.5, utilMul: 1.1, feeMul: 3.0, outagePpm: 10_000, spamMul: 4.0, priceVolMul: 2.5 },
+  FEE_SPIKE: { tpsMul: 1.2, utilMul: 1.0, feeMul: 4.0, outagePpm: 0,      spamMul: 1.5, priceVolMul: 1.2 },
+  VOLATILITY:{ tpsMul: 1.0, utilMul: 1.0, feeMul: 1.0, outagePpm: 0,      spamMul: 1.0, priceVolMul: 4.0 },
+};
 
 class MockDataManager {
   constructor() {
     this.mode = 'DETECTING'; // DETECTING | LIVE | MOCK
     this.mockData = {};
     this.updateInterval = null;
+    
+    // Simulation state
+    this.sim = {
+      mode: appState.get('simulationMode') || 'LOCALNET',
+      preset: appState.get('scenarioPreset') || 'NONE',
+      intensity: appState.get('scenarioIntensity') ?? 0.5,
+      seed: appState.get('scenarioSeed') ?? 1337,
+    };
+    this._rngSeed = this.sim.seed;
+    this.rng = mulberry32(this.sim.seed);
+
+    // Consensus + network state (updated each tick)
+    this.missedSlotStreak   = 0;
+    this.totalMissedBlocks  = 0;
+    this.finalityLagBlocks  = 5;
+    this.lastProducedBlocks = 3;
+    this.activePeerCount    = 64;
+    this.avgLatencyMs       = 28;
+
     // Adaptive baseline state mirrors NetworkIssuanceController
     this.baselineTxCount = 100;
     this.baselineTxVolume = 10_000;
     this.baselineMiners = 10;
     this.prevAnnualIssuance = 0;
-    // Use same base URL as main app (default: localhost:5000)
-    this.nodeUrl = window.BLOCK_BUSTER_API || 'http://localhost:5000';
+    // Use same base URL as main app (default: empty for relative paths via proxy)
+    this.nodeUrl = window.BLOCK_BUSTER_API ?? '';
   }
 
   /**
@@ -51,11 +111,46 @@ class MockDataManager {
         if (response.ok) {
           const payload = await response.json().catch(() => ({}));
           const bootstrap = payload?.bootstrap || {};
-          const rpcConnected = Boolean(
+
+          // Primary contract: health payload advertises whether RPC is actually usable.
+          // Fallback contract: some health payloads omit bootstrap; probe JSON-RPC directly.
+          let rpcConnected = Boolean(
             bootstrap.rpc_connected ?? bootstrap.genesis_ready ?? false,
           );
+
           if (!rpcConnected) {
-            // Dashboard reachable but node offline; keep waiting.
+            try {
+              const controller2 = new AbortController();
+              const timeoutId2 = setTimeout(() => controller2.abort(), 1000);
+
+              const rpcRes = await fetch(`${this.nodeUrl}/rpc`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                signal: controller2.signal,
+                body: JSON.stringify({
+                  jsonrpc: '2.0',
+                  id: 1,
+                  method: 'consensus.block_height',
+                  params: [],
+                }),
+              });
+
+              clearTimeout(timeoutId2);
+
+              if (rpcRes.ok) {
+                const rpcJson = await rpcRes.json().catch(() => null);
+                const h = rpcJson?.result?.height;
+                if (typeof h === 'number' && Number.isFinite(h) && h >= 0) {
+                  rpcConnected = true;
+                }
+              }
+            } catch (e) {
+              // Ignore; we'll keep waiting below.
+            }
+          }
+
+          if (!rpcConnected) {
+            // Dashboard reachable but node RPC not yet authoritative; keep waiting.
             await new Promise((resolve) => setTimeout(resolve, 250));
             continue;
           }
@@ -97,17 +192,94 @@ class MockDataManager {
     // Time-of-day adjustment (affects TPS, activity)
     this.timeOfDayMultiplier = this.getTimeOfDayMultiplier();
     
+    // Energy market — must init BEFORE issuance so mockNetworkIssuance() reads real avg_utilization
+    // not the 0.60 fallback. Ordering here is load-bearing.
+    this.mockData.energyMarket = this.mockEnergyMarket();
+
     // Network issuance (from economics_and_governance.md)
     this.mockData.issuance = this.mockNetworkIssuance();
     
-    // DEX order book (from node/src/dex/order_book.rs)
-    this.mockData.orderBook = this.mockOrderBook();
-    
     // Ad market quality (from economics_and_governance.md)
     this.mockData.adQuality = this.mockAdQuality();
-    
-    // Energy market
-    this.mockData.energyMarket = this.mockEnergyMarket();
+
+    // Ad market readiness snapshot — schema-complete mirror of AdReadinessSnapshot
+    // (node/src/ad_readiness.rs). Every field the UI or fetchAdReadiness() reads must
+    // exist here so mock mode never produces undefined-field crashes.
+    this.mockData.adReadiness = {
+      // Core readiness thresholds (mirrors AdReadinessConfig defaults)
+      window_secs:          6 * 60 * 60, // DEFAULT_WINDOW_SECS
+      min_unique_viewers:   250,         // DEFAULT_MIN_VIEWERS
+      min_host_count:       25,          // DEFAULT_MIN_HOSTS
+      min_provider_count:   10,          // DEFAULT_MIN_PROVIDERS
+      // Observed values (early-stage network)
+      unique_viewers:       12_400,
+      host_count:           37,
+      provider_count:       12,
+      ready:                true,
+      blockers:             [],
+      last_updated:         Date.now(),
+      // Economic extras
+      total_usd_micros:         0,
+      settlement_count:         0,
+      price_usd_micros:         0,
+      market_price_usd_micros:  0,
+      cohort_utilization:       [],
+      utilization_summary: {
+        cohort_count: 2,
+        mean_ppm:     760_000,
+        min_ppm:      620_000,
+        max_ppm:      860_000,
+        last_updated: Date.now(),
+      },
+      ready_streak_windows: 8,
+      // F/P/R block — AdSegmentReadiness
+      segment_readiness: {
+        domain_tiers: {
+          premium: { supply_ppm: 420_000, readiness_score: 82, cohort_count: 3 },
+          standard: { supply_ppm: 580_000, readiness_score: 74, cohort_count: 5 },
+        },
+        interest_tags: {
+          tech:    { supply_ppm: 310_000, readiness_score: 88, cohort_count: 2 },
+          finance: { supply_ppm: 270_000, readiness_score: 79, cohort_count: 2 },
+        },
+        presence_buckets: {
+          cohort_0: {
+            freshness_histogram: {
+              under_1h_ppm:      620_000,
+              hours_1_to_6_ppm:  250_000,
+              hours_6_to_24_ppm: 100_000,
+              over_24h_ppm:       30_000,
+            },
+            ready_slots: 480,
+            kind: 'localnet',
+          },
+          cohort_1: {
+            freshness_histogram: {
+              under_1h_ppm:      710_000,
+              hours_1_to_6_ppm:  190_000,
+              hours_6_to_24_ppm:  80_000,
+              over_24h_ppm:       20_000,
+            },
+            ready_slots: 560,
+            kind: 'localnet',
+          },
+        },
+        privacy_budget: {
+          remaining_ppm:     880_000,
+          denied_count:      0,
+          last_denial_reason: null,
+        },
+      },
+    };
+
+    // Ad policy snapshot (placeholder until node exposes full policy surface)
+    this.mockData.adPolicySnapshot = {
+      as_of_ms: Date.now(),
+      note: 'Mock policy snapshot (placeholder)',
+      cohort_quality_floor_ppm: 500_000,
+      cohort_quality_ceil_ppm: 1_500_000,
+      base_bid_median_microunits: 50_000, // 0.050 BLOCK
+    };
     
     // Time-series data (REALISTIC TPS for early network)
     const baselineTPS = this.getRealisticTPS(); // 80-200 TPS typical
@@ -128,14 +300,36 @@ class MockDataManager {
       cyclePeriod: 24,
     });
     
-    // Fee history (consumer + industrial lanes)
+    // DEX order book — must init AFTER priceHistory so mockOrderBook() reads live mid price
+    this.mockData.orderBook = this.mockOrderBook();
+    appState.set('orderBook', this.mockData.orderBook);
+
+    // Fee history — seeded from shared currentBaseFee so mockMempool reads the same state
+    this.currentBaseFee = 25000; // 0.025 BLOCK — single source of truth for base fee
     this.mockData.feeHistory = this.mockTimeSeries({
       length: 100,
-      baseValue: 25000, // 0.025 BLOCK average fee
+      baseValue: this.currentBaseFee,
       trend: 0.0001,
       volatility: 0.08,
       cyclePeriod: 24,
     });
+
+    // Validators — 20 entries, must match uniqueMiners = 20 in mockNetworkIssuance()
+    this.mockData.validators = this.mockValidators();
+
+    // Initialize mock wallet with default balance
+    this.mockData.wallet = {
+      '0x0000': { balance: 10000, nonce: 0 }, // Default user
+      'treasury': { balance: 5000000, nonce: 0 } // Mock treasury
+    };
+
+    // Compute + storage markets — schema-driven mock surfaces used by panels + rpc-mock.js
+    this.mockData.computeMarket = this.mockComputeMarket();
+    this.mockData.storageMarket = this.mockStorageMarket();
+
+    // Expose scenario/network sim state as a mockData key so rpc-mock.js reads
+    // a single, consistent source instead of undefined.
+    this.mockData.simulation = this._buildSimSnapshot(false);
     
     console.log(`[MockDataManager] Network: block ${this.currentBlock.toLocaleString()}, epoch ${this.currentEpoch}, emission ${this.currentEmission.toLocaleString()} BLOCK`);
     console.log(`[MockDataManager] TPS baseline: ${Math.floor(baselineTPS)}, time multiplier: ${this.timeOfDayMultiplier.toFixed(2)}x`);
@@ -143,122 +337,50 @@ class MockDataManager {
   }
 
   /**
-   * Network Issuance Formula (ACTUAL FORMULA FROM DOCS)
-   * reward = base × activity × decentralization × supply_decay
-   * 
-   * Based on: ~/projects/the-block/docs/economics_and_governance.md
+   * Network Issuance Formula
+   * Delegates entirely to the canonical EconomicsEngine to ensure perfect math parity.
    */
   mockNetworkIssuance(params = {}) {
     const PPM = 1_000_000;
-    const paramsDefault = {
-      max_supply_block: 40_000_000,
-      expected_total_blocks: 20_000_000,
-      baseline_tx_count: 100,
-      baseline_tx_volume_block: 10_000,
-      baseline_miners: 10,
-      activity_multiplier_min_ppm: 500_000,
-      activity_multiplier_max_ppm: 2_000_000,
-      decentralization_multiplier_min_ppm: 500_000,
-      decentralization_multiplier_max_ppm: 1_500_000,
-      adaptive_baselines_enabled: true,
-      baseline_ema_alpha_ppm: 50_000,
-      kill_switch_reduction_ppm: 0,
-    };
 
-    const paramsMerged = { ...paramsDefault, ...params };
-    const alpha = paramsMerged.baseline_ema_alpha_ppm / PPM;
-
-    // Helpers (ppm aware)
-    const clampPpm = (v, min, max) => Math.min(Math.max(v, min), max);
-    const mulDivPpm = (a, b, denom) => (denom === 0 ? 0 : Math.round((a * b) / denom));
-    const sqrtPpm = (v) => Math.round(Math.sqrt(v / PPM) * PPM);
-    const pow2Ppm = (v) => Math.min(Math.round((v * v) / PPM), Number.MAX_SAFE_INTEGER);
-
-    // Observed metrics from mock state
+    // Build the inputs required by computeIssuance based on current mock state
     const tpsSeries = this.mockData.tpsHistory || [];
     const currentTps = tpsSeries.length ? tpsSeries[tpsSeries.length - 1].value : 80;
-    const epochSeconds = 120;
+    const epochSeconds = CONSTANTS.EPOCH_BLOCKS;
+    
+    // Simulate observed epoch tx data
     const tx_count = Math.max(1, Math.round(currentTps * epochSeconds));
     const tx_volume_block = Math.max(1, Math.round(tx_count * 0.5));
-    const unique_miners = 20;
-    const avg_market_utilization_ppm = Math.round(
-      clampPpm(
-        Math.floor(((this.mockData?.energyMarket?.avg_utilization || 0.6) * PPM)),
-        0,
-        PPM,
-      ),
-    );
+    const uniqueMiners = 20;
+    
+    // Simulate average market utilization across 4 markets
+    const eMkt = this.mockData.energyMarket || {};
+    const avgUtil = (params.avgUtilOverride != null) ? params.avgUtilOverride : (eMkt.avg_utilization || 0.60);
 
-    // Base reward in ppm terms
-    const distributable_supply = mulDivPpm(
-      paramsMerged.max_supply_block,
-      900_000,
-      PPM,
-    );
-    const base_reward_ppm = mulDivPpm(
-      distributable_supply,
-      PPM,
-      paramsMerged.expected_total_blocks,
-    );
+    // Convert raw tx counts into the ratios that computeIssuance expects
+    // By dividing against the adaptive baselines
+    const txCountRatio = tx_count / Math.max(1, this.baselineTxCount);
+    const txVolumeRatio = tx_volume_block / Math.max(1, this.baselineTxVolume);
 
-    // Activity multiplier (geometric mean with utilization bonus)
-    const tx_ratio_ppm = mulDivPpm(tx_count, PPM, Math.max(1, this.baselineTxCount));
-    const volume_ratio_ppm = mulDivPpm(
-      tx_volume_block,
-      PPM,
-      Math.max(1, this.baselineTxVolume),
-    );
-    const tx_factor_ppm = sqrtPpm(Math.max(tx_ratio_ppm, 10_000));
-    const volume_factor_ppm = sqrtPpm(Math.max(volume_ratio_ppm, 10_000));
-    const utilization_bonus_ppm = 1_000_000 + avg_market_utilization_ppm;
-    const activity_multiplier_ppm = clampPpm(
-      mulDivPpm(
-        tx_factor_ppm,
-        mulDivPpm(volume_factor_ppm, utilization_bonus_ppm, PPM),
-        PPM,
-      ),
-      paramsMerged.activity_multiplier_min_ppm,
-      paramsMerged.activity_multiplier_max_ppm,
-    );
+    // Run the actual engine formula
+    const engineOut = computeIssuance({
+      txCountRatio,
+      txVolumeRatio,
+      marketUtil: avgUtil,
+      uniqueMiners,
+      baselineMiners: this.baselineMiners,
+      emission: this.currentEmission,
+      maxSupply: CONSTANTS.MAX_SUPPLY,
+      targetInflationBps: 500, // 5%
+      // Pass EMA params so the engine performs baseline smoothing automatically
+      emaAlphaPpm: CONSTANTS.EMA_ALPHA_PPM_DEFAULT,
+      baselineEpochs: 10,
+    });
 
-    // Decentralization multiplier
-    const miner_ratio_ppm = mulDivPpm(unique_miners, PPM, Math.max(1, this.baselineMiners));
-    const decentralization_multiplier_ppm = clampPpm(
-      sqrtPpm(Math.max(miner_ratio_ppm, 10_000)),
-      paramsMerged.decentralization_multiplier_min_ppm,
-      paramsMerged.decentralization_multiplier_max_ppm,
-    );
-
-    // Supply decay (quadratic)
-    const remaining = paramsMerged.max_supply_block - this.currentEmission;
-    const remaining_ratio_ppm = mulDivPpm(
-      remaining,
-      PPM,
-      paramsMerged.max_supply_block,
-    );
-    const supply_decay_ppm = pow2Ppm(remaining_ratio_ppm);
-
-    // Combine
-    const reward_unclamped_ppm = mulDivPpm(
-      mulDivPpm(
-        mulDivPpm(base_reward_ppm, activity_multiplier_ppm, PPM),
-        decentralization_multiplier_ppm,
-        PPM,
-      ),
-      supply_decay_ppm,
-      PPM,
-    );
-
-    const reward_reduced_ppm = mulDivPpm(
-      reward_unclamped_ppm,
-      PPM - Math.min(paramsMerged.kill_switch_reduction_ppm, PPM),
-      PPM,
-    );
-
-    const reward = Math.round((reward_reduced_ppm + PPM / 2) / PPM);
-    const annual_issuance = reward * 31_536_000;
-
-    // Drift clamp (5%/yr)
+    const reward = engineOut.blockReward;
+    const annual_issuance = engineOut.annualIssuance;
+    
+    // Drift clamp (5%/yr) - smooths out mock volatility
     const MAX_ANNUAL_DRIFT_PPM = 50_000;
     let final_reward = reward;
     if (this.prevAnnualIssuance > 0) {
@@ -269,67 +391,90 @@ class MockDataManager {
         const cap = Math.round(
           this.prevAnnualIssuance * (1 + MAX_ANNUAL_DRIFT_PPM / PPM),
         );
-        const capped_reward = Math.round(cap / 31_536_000);
+        const capped_reward = cap / CONSTANTS.BLOCKS_PER_YEAR;
         final_reward = Math.min(final_reward, capped_reward);
       }
     }
 
-    // Update adaptive baselines (EMA)
+    // Update adaptive baselines (EMA) - mirror Rust node behavior
+    const alpha = CONSTANTS.EMA_ALPHA_PPM_DEFAULT / PPM;
     this.baselineTxCount = Math.max(
-      paramsMerged.baseline_tx_count,
+      100,
       Math.min(
         10_000,
         (1 - alpha) * this.baselineTxCount + alpha * tx_count,
       ),
     );
     this.baselineTxVolume = Math.max(
-      paramsMerged.baseline_tx_volume_block,
+      10_000,
       Math.min(
         1_000_000,
         (1 - alpha) * this.baselineTxVolume + alpha * tx_volume_block,
       ),
     );
     this.baselineMiners = Math.max(
-      paramsMerged.baseline_miners,
+      10,
       Math.min(
         100,
-        (1 - alpha) * this.baselineMiners + alpha * unique_miners,
+        (1 - alpha) * this.baselineMiners + alpha * uniqueMiners,
       ),
     );
 
     this.prevAnnualIssuance = annual_issuance;
 
-    // History points for charts (keep same shape)
+    // History points for charts
     const history = [];
     for (let i = 0; i < 100; i++) {
       const epochNum = this.currentEpoch - 99 + i;
-      const blockNum = epochNum * 120;
+      const blockNum = epochNum * CONSTANTS.EPOCH_BLOCKS;
       history.push({
         epoch: epochNum,
         block: blockNum,
         reward: final_reward,
-        timestamp: Date.now() - (99 - i) * 120 * 1000,
+        timestamp: Date.now() - (99 - i) * CONSTANTS.EPOCH_BLOCKS * 1000,
       });
     }
 
+    // Return the shape expected by EconomicControlLaws and EconomicsSimulator mock paths
     return {
-      base_reward: base_reward_ppm / PPM,
-      activity_multiplier: activity_multiplier_ppm / PPM,
+      base_reward: CONSTANTS.BASE_REWARD,
+      activity_multiplier: engineOut.activityMultiplier,
       activity_breakdown: {
-        tx_count_ratio: tx_ratio_ppm / PPM,
-        tx_volume_ratio: volume_ratio_ppm / PPM,
-        avg_market_utilization: avg_market_utilization_ppm / PPM,
+        tx_count_ratio: txCountRatio,
+        tx_volume_ratio: txVolumeRatio,
+        avg_market_utilization: avgUtil,
       },
-      decentralization_factor: decentralization_multiplier_ppm / PPM,
-      unique_miners,
+      decentralization_factor: engineOut.decentralization,
+      uniqueMiners,
+      unique_miners: uniqueMiners, // snake_case alias for UI syncFromMock()
+      gate_streak: 9,              // early-net simulated streak (used by governor gate UI)
+      // P4: schema-complete per-market metrics so EconomicsSimulator can sync its sliders
+      economics_prev_market_metrics: [
+        {
+          utilization_ppm: CONSTANTS.STORAGE_UTIL_PPM_DEFAULT,
+          provider_margin_ppm: CONSTANTS.STORAGE_MARGIN_PPM_DEFAULT,
+        },
+        {
+          utilization_ppm: CONSTANTS.COMPUTE_UTIL_PPM_DEFAULT,
+          provider_margin_ppm: CONSTANTS.COMPUTE_MARGIN_PPM_DEFAULT,
+        },
+        {
+          utilization_ppm: CONSTANTS.ENERGY_UTIL_PPM_DEFAULT,
+          provider_margin_ppm: CONSTANTS.ENERGY_MARGIN_PPM_DEFAULT,
+        },
+        {
+          utilization_ppm: CONSTANTS.AD_UTIL_PPM_DEFAULT,
+          provider_margin_ppm: CONSTANTS.AD_MARGIN_PPM_DEFAULT,
+        },
+      ],
       baseline_miners: this.baselineMiners,
-      supply_decay: supply_decay_ppm / PPM,
+      supply_decay: engineOut.supplyDecay,
       emission_consumer: this.currentEmission,
-      remaining_supply: paramsMerged.max_supply_block - this.currentEmission,
-      max_supply: paramsMerged.max_supply_block,
+      remaining_supply: CONSTANTS.MAX_SUPPLY - this.currentEmission,
+      max_supply: CONSTANTS.MAX_SUPPLY,
       final_reward,
       block_reward_per_block: final_reward,
-      annual_issuance,
+      annual_issuance: final_reward * CONSTANTS.BLOCKS_PER_YEAR,
       realized_inflation_bps: this.currentEmission
         ? (annual_issuance / this.currentEmission) * 10_000
         : 0,
@@ -340,6 +485,17 @@ class MockDataManager {
       epoch: this.currentEpoch,
       block_height: this.currentBlock,
       history,
+
+      // ── Network capacity (derived from receipts_validation.rs constants) ──────────────────
+      // max_tps: protocol hard ceiling — 10,000 receipts/block at 1s cadence = 10,000 TPS.
+      // target_tps: EIP-1559 fee controller target (60% of capacity) = 6,000 TPS.
+      // Early-network realistic TPS (80–200) is ~0.8–2% of max_tps — this is correct and
+      // expected for a localnet/testnet with 20-30 miners; the utilization % will show accurately.
+      max_receipts_per_block: BLOCK_MAX_RECEIPTS,  // 10,000
+      max_tps:                BLOCK_MAX_TPS,        // 10,000
+      target_tps:             BLOCK_TARGET_TPS,     //  6,000
+      // Total emitted supply — for TheBlock "Supply" compact card
+      total_emission:         this.currentEmission,
     };
   }
 
@@ -348,45 +504,57 @@ class MockDataManager {
    * Mimics BTreeMap<u64, VecDeque<Order>> from Rust
    */
   mockOrderBook(params = {}) {
-    const midPrice = params.midPrice || 115000; // 1.15 USD in micro-units
+    // Derive mid price from live priceHistory — single source of truth
+    const priceHist = this.mockData.priceHistory || [];
+    const liveMid = priceHist.length ? priceHist[priceHist.length - 1].value : 115000;
+    const midPrice = params.midPrice || liveMid;
     const spread_bps = params.spread_bps || 87;
     const depth = params.depth || 20;
     const volumeProfile = params.volumeProfile || 'exponential';
-    
+
+    // Liquidity depth scales with circulating supply — more emission = more market depth
+    const supplyScale = this.currentEmission
+      ? Math.min(2.0, this.currentEmission / 5_000_000)
+      : 0.64;
+    const baseVolume = Math.floor(800 * Math.max(0.4, supplyScale));
+
     const bids = [];
     const asks = [];
-    
+
     const spreadAmount = Math.floor((midPrice * spread_bps) / 20000);
     const bestBid = midPrice - spreadAmount;
     const bestAsk = midPrice + spreadAmount;
     
+    // Tick size: 0.05% of mid price — stays proportional at any price level
+    // Hardcoded 100 micro-USD was only correct near $1.15; drifts badly at any other price.
+    const tickSize = Math.max(1, Math.round(midPrice * 0.0005));
+
     // Generate bids (descending price)
     for (let i = 0; i < depth; i++) {
-      const price = bestBid - i * 100;
+      const price = bestBid - i * tickSize;
       const distanceFromMid = (midPrice - price) / midPrice;
-      
+
       let volumeMultiplier;
       if (volumeProfile === 'exponential') {
         volumeMultiplier = Math.exp(-distanceFromMid * 10);
       } else {
         volumeMultiplier = 1 / (1 + distanceFromMid * 5);
       }
+
+      const volume = Math.floor(baseVolume * volumeMultiplier * (0.8 + this.rng() * 0.4));
       
-      const baseVolume = 1000;
-      const volume = Math.floor(baseVolume * volumeMultiplier * (0.8 + Math.random() * 0.4));
-      
-      const numOrders = Math.floor(Math.random() * 3) + 1;
+      const numOrders = Math.floor(this.rng() * 3) + 1;
       const orders = [];
       let remaining = volume;
       
       for (let j = 0; j < numOrders && remaining > 0; j++) {
         const orderSize = j === numOrders - 1 
           ? remaining 
-          : Math.floor(remaining * (0.3 + Math.random() * 0.4));
+          : Math.floor(remaining * (0.3 + this.rng() * 0.4));
         
         orders.push({
           id: Date.now() + i * 100 + j,
-          account: `addr${Math.floor(Math.random() * 1000)}`,
+          account: `addr${Math.floor(this.rng() * 1000)}`,
           side: 'Buy',
           amount: orderSize,
           price,
@@ -401,31 +569,30 @@ class MockDataManager {
     
     // Generate asks (ascending price)
     for (let i = 0; i < depth; i++) {
-      const price = bestAsk + i * 100;
+      const price = bestAsk + i * tickSize;
       const distanceFromMid = (price - midPrice) / midPrice;
-      
+
       let volumeMultiplier;
       if (volumeProfile === 'exponential') {
         volumeMultiplier = Math.exp(-distanceFromMid * 10);
       } else {
         volumeMultiplier = 1 / (1 + distanceFromMid * 5);
       }
-      
-      const baseVolume = 1000;
-      const volume = Math.floor(baseVolume * volumeMultiplier * (0.8 + Math.random() * 0.4));
-      
-      const numOrders = Math.floor(Math.random() * 3) + 1;
+
+      const volume = Math.floor(baseVolume * volumeMultiplier * (0.8 + this.rng() * 0.4));
+
+      const numOrders = Math.floor(this.rng() * 3) + 1;
       const orders = [];
       let remaining = volume;
-      
+
       for (let j = 0; j < numOrders && remaining > 0; j++) {
-        const orderSize = j === numOrders - 1 
-          ? remaining 
-          : Math.floor(remaining * (0.3 + Math.random() * 0.4));
-        
+        const orderSize = j === numOrders - 1
+          ? remaining
+          : Math.floor(remaining * (0.3 + this.rng() * 0.4));
+
         orders.push({
           id: Date.now() + i * 100 + j + 10000,
-          account: `addr${Math.floor(Math.random() * 1000)}`,
+          account: `addr${Math.floor(this.rng() * 1000)}`,
           side: 'Sell',
           amount: orderSize,
           price,
@@ -447,6 +614,20 @@ class MockDataManager {
       0
     );
     
+    // 24h simulated DEX trade volume: 2–8× book depth turnover (realistic thin early market)
+    const totalBookDepthBLOCK = total_bid_volume + total_ask_volume;
+    const turnoverMultiplier = 2 + this.rng() * 6; // 2×–8× daily turnover
+    const volume_24h_block = Math.round(totalBookDepthBLOCK * turnoverMultiplier);
+    const volume_24h_usd = Math.round(volume_24h_block * midPrice / 100000);
+
+    // Book depth as % of market cap — key thin-market liquidity signal for dashboard
+    const circulatingSupply = this.currentEmission || 3_200_000;
+    const market_cap_usd = Math.round(circulatingSupply * midPrice / 100000);
+    const total_depth_usd = Math.round(totalBookDepthBLOCK * midPrice / 100000);
+    const depth_to_mcap_pct = market_cap_usd > 0
+      ? ((total_depth_usd / market_cap_usd) * 100).toFixed(3)
+      : '0.000';
+
     return {
       bids,
       asks,
@@ -454,9 +635,43 @@ class MockDataManager {
       spread_bps,
       total_bid_volume,
       total_ask_volume,
+      volume_24h_block,
+      volume_24h_usd,
+      market_cap_usd,
+      depth_to_mcap_pct,
       last_trade_price: midPrice,
       last_trade_time: Date.now(),
     };
+  }
+
+  /**
+   * Validator Set
+   * 20 entries — must match uniqueMiners = 20 in mockNetworkIssuance().
+   * Shape mirrors consensus.validators RPC response so rpc-mock.js delegates here.
+   */
+  mockValidators() {
+    const count = 20;
+    const validators = [];
+    for (let i = 0; i < count; i++) {
+      const uptimePct = 0.96 + this.rng() * 0.04; // 96–100%
+      const stakeBase = 50_000 + Math.floor(this.rng() * 150_000); // 50k–200k BLOCK
+      validators.push({
+        id: `validator-${String(i + 1).padStart(2, '0')}`,
+        address: `0x${this.randomHex(40)}`,
+        stake: stakeBase,
+        stake_weight_ppm: Math.floor((stakeBase / (count * 125_000)) * 1_000_000),
+        commission_bps: 300 + Math.floor(this.rng() * 700), // 3–10%
+        uptime_pct: uptimePct,
+        uptime_streak_blocks: Math.floor(uptimePct * (this.currentBlock || 0)),
+        blocks_proposed: Math.max(0, Math.floor((this.currentBlock || 0) / count + this.noise(100))),
+        blocks_missed: Math.max(0, Math.floor((1 - uptimePct) * (this.currentBlock || 0) / count)),
+        last_seen_block: (this.currentBlock || 0) - Math.floor(this.rng() * 3),
+        is_active: true,
+      });
+    }
+    // Sort by stake ascending so jailing logic can deterministically "jail lowest stake".
+    validators.sort((a, b) => a.stake - b.stake);
+    return validators;
   }
 
   /**
@@ -524,28 +739,28 @@ class MockDataManager {
     const providers = [];
     
     for (let i = 0; i < numProviders; i++) {
-      const capacity_kwh = 1000 + Math.floor(Math.random() * 9000);
-      const utilization = 0.4 + Math.random() * 0.5;
+      const capacity_kwh = 1000 + Math.floor(this.rng() * 9000);
+      const utilization = 0.4 + this.rng() * 0.5;
       const delivered_kwh = Math.floor(capacity_kwh * utilization);
       
-      const base_price = 80000;
-      const price_variance = 0.8 + Math.random() * 0.4;
-      const price_per_kwh = Math.floor(base_price * price_variance);
+      const base_price = 0.08; // 8 cents per kWh (USD)
+      const price_variance = 0.8 + this.rng() * 0.4;
+      const price_per_kwh = parseFloat((base_price * price_variance).toFixed(3));
       
       providers.push({
-        id: `energy-provider-${i}`,
+        provider_id: `energy-provider-${i}`,
         name: `Provider ${String.fromCharCode(65 + i)}`,
         capacity_kwh,
         delivered_kwh,
         utilization,
         price_per_kwh,
-        stake: 10000 + Math.floor(Math.random() * 90000),
+        stake: 10000 + Math.floor(this.rng() * 90000),
         meter_address: `meter_${i}_${Date.now()}`,
-        jurisdiction: ['US_CA', 'US_TX', 'US_NY', 'EU_DE'][Math.floor(Math.random() * 4)],
-        credits_pending: Math.floor(Math.random() * 500),
-        receipts_count: Math.floor(Math.random() * 1000),
-        disputes_count: Math.random() > 0.9 ? 1 : 0,
-        last_reading_time: Date.now() - Math.floor(Math.random() * 3600000),
+        jurisdiction: ['US_CA', 'US_TX', 'US_NY', 'EU_DE'][Math.floor(this.rng() * 4)],
+        credits_pending: Math.floor(this.rng() * 500),
+        receipts_count: Math.floor(this.rng() * 1000),
+        disputes_count: this.rng() > 0.9 ? 1 : 0,
+        last_reading_time: Date.now() - Math.floor(this.rng() * 3600000),
       });
     }
     
@@ -566,11 +781,12 @@ class MockDataManager {
    * Accounts for time of day, network growth stage, and organic variation
    */
   getRealisticTPS() {
-    // Simulate an active network: 800–1500 TPS with day/night modulation
+    // Early-stage network: 30–500 TPS, scales with emission maturity
+    // Matches MOCK_DATA_REALISM_UPGRADE.md formula exactly
     const maturityFactor = Math.min(1.0, this.currentEmission / 10_000_000);
-    const minTPS = 800 + maturityFactor * 200;  // 800 → 1000
-    const maxTPS = 1200 + maturityFactor * 300; // 1200 → 1500
-    const baseline = minTPS + (maxTPS - minTPS) * 0.5;
+    const minTPS = 30 + maturityFactor * 70;   // 30 (launch) → 100 (mature)
+    const maxTPS = 100 + maturityFactor * 400; // 100 (launch) → 500 (mature)
+    const baseline = (minTPS + maxTPS) / 2;
     return baseline * this.timeOfDayMultiplier;
   }
 
@@ -620,7 +836,7 @@ class MockDataManager {
       const cycleEffect = Math.sin((i / cyclePeriod) * 2 * Math.PI) * volatility * baseValue;
       
       // Random walk (market noise)
-      const randomWalk = (Math.random() - 0.5) * volatility * baseValue * 0.5;
+      const randomWalk = (this.rng() - 0.5) * volatility * baseValue * 0.5;
       
       // Time-of-day effect (if enabled)
       let timeMultiplier = 1.0;
@@ -662,23 +878,110 @@ class MockDataManager {
    * Advances network state and updates all time-series
    */
   updateMockData() {
-    // Advance network state (~3 blocks per update at 1s block time)
-    this.currentBlock += 3;
-    this.currentEpoch = Math.floor(this.currentBlock / 120);
+    this.validateInvariants();
     
-    // Update emission (very slowly, ~0.5 BLOCK per 3s = ~5M BLOCK/year)
-    const blocksPerSecond = 1;
-    const rewardPerBlock = 0.36 * 1.2 * 1.07 * 0.92; // Approximate from formula
-    this.currentEmission += rewardPerBlock * 3; // 3 seconds = 3 blocks
+    // Read simulation state dynamically to allow UI updates on the fly
+    this.sim = {
+      mode: appState.get('simulationMode') || 'LOCALNET',
+      preset: appState.get('scenarioPreset') || 'NONE',
+      intensity: appState.get('scenarioIntensity') ?? 0.5,
+      seed: appState.get('scenarioSeed') ?? 1337,
+    };
+
+    // Seed hot-swap: if user changed seed at runtime, rebuild deterministic RNG
+    if (this.sim.seed !== this._rngSeed) {
+      this._rngSeed = this.sim.seed;
+      this.rng = mulberry32(this.sim.seed);
+      // Reset accumulators so the new seed starts clean
+      this.missedSlotStreak   = 0;
+      this.totalMissedBlocks  = 0;
+      this.finalityLagBlocks  = 5;
+      this.lastProducedBlocks = 3;
+      this.activePeerCount    = 64;
+      this.avgLatencyMs       = 28;
+      console.log(`[MockDataManager] RNG re-seeded to ${this.sim.seed}`);
+    }
+
+    const sim = this.sim;
+    const preset = SCENARIOS[sim.preset] || SCENARIOS.NONE;
+    const k = Math.max(0, Math.min(1, sim.intensity));
+    const lerp = (a, b, t) => a + (b - a) * t;
+
+    const tpsMul      = lerp(1.0, preset.tpsMul, k);
+    const utilMul     = lerp(1.0, preset.utilMul, k);
+    const feeMul      = lerp(1.0, preset.feeMul, k);
+    const spamMul     = lerp(1.0, preset.spamMul, k);
+    const priceVolMul = lerp(1.0, preset.priceVolMul, k);
+    const outagePpm   = Math.round(lerp(0, preset.outagePpm, k));
+    const outageHit   = (Math.floor(this.rng() * 1_000_000) < outagePpm);
+
+    // Keep compute/storage markets and the simulation snapshot in sync with the live scenario.
+    // rpc-mock.js reads these keys and should never see undefined or stale state.
+    this.mockData.computeMarket = this.mockComputeMarket();
+    this.mockData.storageMarket = this.mockStorageMarket();
+
+    // ── Consensus: produced blocks this tick ─────────────────────────────────
+    // Normal cadence: 3 blocks per 3s tick. Each block independently may be
+    // missed based on slotMissPpm. Full outage collapses production to 0.
+    const slotMissPpm   = Math.round(lerp(1_000,    preset.slotMissPpm,  k));
+    const targetFinLag  = Math.round(lerp(5,         preset.finalityLag + 5, k));
+    const peerDropPct   = lerp(0.0, preset.peerDropPct,   k);
+    const latencyMul    = lerp(1.0, preset.latencyMul,    k);
+    const validatorJail = lerp(0.0, preset.validatorJail, k);
+    const reorgRisk     = Math.round(lerp(0, preset.reorgRisk, k));
+    const reorgHit      = !outageHit && (Math.floor(this.rng() * 1_000_000) < reorgRisk);
+
+    let producedBlocks = 0;
+    let missedThisTick = 0;
+    if (!outageHit) {
+      for (let b = 0; b < 3; b++) {
+        const missed = (Math.floor(this.rng() * 1_000_000) < slotMissPpm);
+        if (missed) { missedThisTick++; } else { producedBlocks++; }
+      }
+    } else {
+      missedThisTick = 3;
+    }
+    this.lastProducedBlocks  = producedBlocks;
+    this.totalMissedBlocks  += missedThisTick;
+    if (missedThisTick > 0) { this.missedSlotStreak++; } else { this.missedSlotStreak = 0; }
+
+    // Finality lag: smooth convergence to scenario target; reorg spikes it
+    const finLagDelta = (targetFinLag - this.finalityLagBlocks) * 0.15;
+    this.finalityLagBlocks = Math.max(5, Math.round(
+      this.finalityLagBlocks + finLagDelta + (reorgHit ? 5 : 0)
+    ));
+
+    // Peer count + latency: smoothly approach scenario targets
+    const targetPeers   = Math.round(64 * (1 - peerDropPct));
+    const targetLatency = Math.round(28 * latencyMul);
+    this.activePeerCount = Math.max(3,  Math.round(this.activePeerCount + (targetPeers   - this.activePeerCount) * 0.12));
+    this.avgLatencyMs    = Math.max(8,  Math.round(this.avgLatencyMs    + (targetLatency - this.avgLatencyMs)    * 0.12));
+
+    // Publish simulation snapshot after core network state updates so consumers
+    // (rpc-mock + UI) always see consistent fields.
+    this.mockData.simulation = this._buildSimSnapshot(outageHit);
+
+    // Advance chain height (at least +1 even on full outage — time still moves)
+    const blockAdvance = Math.max(1, producedBlocks);
+    this.currentBlock += blockAdvance;
+    this.currentEpoch  = Math.floor(this.currentBlock / 120);
+
+    // Emission: only produced (not missed) blocks earn rewards
+    const lastIssuance  = this.mockData.issuance;
+    const rewardPerBlock = lastIssuance ? lastIssuance.final_reward : 0.36;
+    this.currentEmission += rewardPerBlock * producedBlocks;
     
     // Recalculate time-of-day multiplier
     this.timeOfDayMultiplier = this.getTimeOfDayMultiplier();
     
-    // Update TPS history (with time-of-day effects)
+    // Update TPS history (with time-of-day effects and simulation modifiers)
     const lastTps = this.mockData.tpsHistory[this.mockData.tpsHistory.length - 1].value;
-    const tpsTarget = this.getRealisticTPS();
+    let tpsTarget = this.getRealisticTPS() * tpsMul;
+    if (outageHit) tpsTarget *= 0.05;
+    tpsTarget = Math.min(BLOCK_MAX_TPS * 0.95, Math.max(10, tpsTarget));
+    
     const tpsAdjustment = (tpsTarget - lastTps) * 0.1; // Smooth transition
-    const newTps = lastTps + tpsAdjustment + this.noise(lastTps * 0.08);
+    const newTps = lastTps + tpsAdjustment + this.noise(lastTps * 0.08 * spamMul);
     
     this.mockData.tpsHistory.push({
       timestamp: Date.now(),
@@ -686,10 +989,22 @@ class MockDataManager {
     });
     this.mockData.tpsHistory.shift();
     
-    // Update price history
+    // Update price history — trend derived from miner sell pressure vs. market demand.
+    // Unconditional positive drift was wrong; real early-network price is sell-pressure dominated.
     const lastPrice = this.mockData.priceHistory[this.mockData.priceHistory.length - 1].value;
-    const priceWalk = this.noise(lastPrice * 0.01);
-    const newPrice = lastPrice * 1.0002 + priceWalk; // Slight upward trend
+    const finalReward = this.mockData.issuance?.final_reward || 0.36;
+    const dailyEmission = finalReward * 86400; // BLOCK emitted per day
+    // ~35% of block rewards market-sold by miners to cover operating costs
+    const dailySellBLOCK = dailyEmission * 0.35;
+    // Fraction of circulating supply sold per 3s tick
+    const tickSellFraction = dailySellBLOCK / Math.max(1, this.currentEmission) / (86400 / 3);
+    const sellPressureDrift = -tickSellFraction * lastPrice * 0.5;       // dampened downward
+    // Buy pressure tracks market utilization: higher util = more demand for BLOCK
+    const avgUtil = (this.mockData.energyMarket?.avg_utilization || 0.6) * utilMul;
+    const buyPressureDrift = avgUtil * tickSellFraction * lastPrice * 0.4;
+    const netDrift = sellPressureDrift + buyPressureDrift;
+    const priceWalk = this.noise(lastPrice * 0.008) * priceVolMul;
+    const newPrice = lastPrice + netDrift + priceWalk;
     
     this.mockData.priceHistory.push({
       timestamp: Date.now(),
@@ -697,32 +1012,108 @@ class MockDataManager {
     });
     this.mockData.priceHistory.shift();
     
-    // Update fee history
+    // Update fee history — keep currentBaseFee in sync (shared state with mockMempool)
     const lastFee = this.mockData.feeHistory[this.mockData.feeHistory.length - 1].value;
-    const feeWalk = this.noise(lastFee * 0.05);
-    const newFee = lastFee + feeWalk;
+    const baseFeeTarget = 25000 * feeMul;
+    const feeAdjustment = (baseFeeTarget - lastFee) * 0.05; // smooth approach
+    const feeWalk = this.noise(lastFee * 0.05) * feeMul;
+    const newFee = Math.max(10000, lastFee + feeAdjustment + feeWalk); // Never below 0.01 BLOCK
+    this.currentBaseFee = newFee; // sync shared state so mockMempool reads same base fee
     
     this.mockData.feeHistory.push({
       timestamp: Date.now(),
-      value: Math.max(10000, newFee), // Never below 0.01 BLOCK
+      value: newFee,
     });
     this.mockData.feeHistory.shift();
     
-    // Update order book (simulate trades)
-    if (Math.random() > 0.7) {
-      const currentMid = this.mockData.orderBook.last_trade_price;
-      const priceChange = this.noise(100);
-      this.mockData.orderBook = this.mockOrderBook({
-        midPrice: currentMid + priceChange,
-        spread_bps: this.mockData.orderBook.spread_bps,
-      });
-      
-      // Notify subscribers
-      appState.set('orderBook', this.mockData.orderBook);
-    }
-    
-    // Update issuance (recalculate with new network state)
-    this.mockData.issuance = this.mockNetworkIssuance();
+    // Update order book every tick using the LATEST priceHistory price
+    // This is the single source of truth — order book always tracks price history
+    const latestPrice = this.mockData.priceHistory[this.mockData.priceHistory.length - 1].value;
+    this.mockData.orderBook = this.mockOrderBook({
+      midPrice: latestPrice,
+      spread_bps: 87,
+    });
+    appState.set('orderBook', this.mockData.orderBook);
+
+    // Update issuance — pass effective utilization so OUTAGE/STRESS affects the
+    // issuance controller inputs the same way a real chain's market utilization would.
+    const avgUtilBase      = this.mockData.energyMarket?.avg_utilization || 0.60;
+    const avgUtilEffective = Math.min(1.0, avgUtilBase * utilMul);
+    this.mockData.issuance = this.mockNetworkIssuance({ avgUtilOverride: avgUtilEffective });
+
+    // Update validators to reflect scenario consensus state
+    this.updateValidatorTick({ validatorJail, slotMissPpm, producedBlocks, missedThisTick });
+
+    // ── Publish simulation snapshot — single source of truth for rpc-mock.js ──
+    this.mockData.simulation = {
+      preset:            sim.preset,
+      intensity:         k,
+      outageActive:      outageHit,
+      reorgHit,
+      producedBlocks,
+      missedThisTick,
+      missedSlotStreak:  this.missedSlotStreak,
+      totalMissedBlocks: this.totalMissedBlocks,
+      finalityLagBlocks: this.finalityLagBlocks,
+      activePeerCount:   this.activePeerCount,
+      avgLatencyMs:      this.avgLatencyMs,
+      latencyMul,
+      peerDropPct,
+      validatorJail,
+      tpsMul,
+      feeMul,
+      avgUtilEffective,
+      timestamp:         Date.now(),
+    };
+  }
+
+  /**
+   * Update validator set each tick based on scenario consensus state.
+   * Called after block production is computed so all numbers are coherent:
+   *   - blocks_proposed on each validator sums to ~producedBlocks (stake-weighted)
+   *   - jailed validators degrade uptime and go inactive
+   *   - missed slots propagate into blocks_missed + reset uptime_streak_blocks
+   */
+  updateValidatorTick({ validatorJail, slotMissPpm, producedBlocks, missedThisTick }) {
+    const validators = this.mockData.validators;
+    if (!validators || validators.length === 0) return;
+
+    const count      = validators.length;
+    const totalStake = validators.reduce((s, v) => s + v.stake, 0);
+    const jailCount  = Math.round(count * validatorJail);
+
+    validators.forEach((v, i) => {
+      const isJailed = i < jailCount; // lowest-stake validators jailed first
+
+      if (isJailed) {
+        // Jailed: rapid uptime decay, mark offline
+        v.uptime_pct      = Math.max(0.30, (v.uptime_pct || 0.96) - 0.02);
+        v.is_active       = false;
+        v.last_seen_block = Math.max(0, this.currentBlock - 20 - Math.round(this.rng() * 50));
+      } else {
+        // Active: slow uptime recovery if previously degraded
+        v.uptime_pct  = Math.min(0.999, (v.uptime_pct || 0.96) + 0.001);
+        v.is_active   = true;
+        v.last_seen_block = this.currentBlock - Math.floor(this.rng() * 3);
+
+        // Stake-weighted block proposal attribution
+        const weight       = v.stake / Math.max(1, totalStake);
+        const proposedThis = Math.round(producedBlocks * weight * count);
+        v.blocks_proposed  = Math.max(0, (v.blocks_proposed || 0) + proposedThis);
+
+        // Missed slots allocated proportionally across active validators
+        const missedShare = Math.round(
+          missedThisTick * weight * (count / Math.max(1, count - jailCount))
+        );
+        v.blocks_missed = Math.max(0, (v.blocks_missed || 0) + missedShare);
+
+        if (missedShare === 0) {
+          v.uptime_streak_blocks = (v.uptime_streak_blocks || 0) + producedBlocks;
+        } else {
+          v.uptime_streak_blocks = 0; // reset streak on miss
+        }
+      }
+    });
   }
 
   /**
@@ -775,15 +1166,20 @@ class MockDataManager {
     const epoch = Math.floor(now / (120 * 1000)); // 120 blocks per epoch
 
     return {
-      // Layer 1: Inflation Control
-      inflation: {
-        target_bps: 500, // 5% annual
-        realized_bps: 480 + this.noise(20),
-        error_bps: -20 + this.noise(15),
-        annual_issuance: 2_000_000 + this.noise(100_000),
-        controller_gain: 0.10,
-        convergence_epochs: 30,
-      },
+      // Layer 1: Inflation Control — derived from live issuance engine, not hardcoded
+      inflation: (() => {
+        const iss = this.mockData.issuance || {};
+        const realizedBps = iss.realized_inflation_bps || 3950;
+        const targetBps = iss.target_inflation_bps || 500;
+        return {
+          target_bps: targetBps,
+          realized_bps: realizedBps + this.noise(20),
+          error_bps: (realizedBps - targetBps) + this.noise(15),
+          annual_issuance: iss.annual_issuance || 12_650_000,
+          controller_gain: 0.10,
+          convergence_epochs: 30,
+        };
+      })(),
       // Layer 2: Subsidy Allocation
       subsidies: {
         storage: {
@@ -879,7 +1275,7 @@ class MockDataManager {
         if (providerFilter && !providerId.includes(providerFilter)) continue;
 
         const amount = this.random(10, 1000) * 100000; // micro-USD
-        const hasDispute = Math.random() < 0.1; // 10% have disputes
+        const hasDispute = this.rng() < 0.1; // 10% have disputes
 
         receipts.push({
           block_height: height,
@@ -905,7 +1301,7 @@ class MockDataManager {
           },
           disputes: hasDispute ? [{
             id: `dispute-${this.randomHex(8)}`,
-            status: Math.random() < 0.3 ? 'resolved' : 'pending',
+            status: this.rng() < 0.3 ? 'resolved' : 'pending',
             reason: ['meter_mismatch', 'quality_violation', 'timeout'][this.random(0, 2)],
             timestamp: Date.now() - this.random(3600000, 86400000),
             meta: {
@@ -933,18 +1329,117 @@ class MockDataManager {
   }
 
   /**
+   * Build a stable snapshot of the current synthetic-localnet simulation state.
+   * This is consumed by rpc-mock.js so all RPC surfaces share the same scenario truth.
+   */
+  _buildSimSnapshot(outageActive) {
+    return {
+      mode:               this.sim.mode,
+      preset:             this.sim.preset,
+      intensity:          this.sim.intensity,
+      avgLatencyMs:       this.avgLatencyMs,
+      activePeerCount:    this.activePeerCount,
+      finalityLagBlocks:  this.finalityLagBlocks,
+      missedSlotStreak:   this.missedSlotStreak,
+      totalMissedBlocks:  this.totalMissedBlocks,
+      outageActive:       Boolean(outageActive),
+      lastProducedBlocks: this.lastProducedBlocks,
+    };
+  }
+
+  /**
+   * Compute market synthetic localnet state.
+   * Not consensus-critical, but must be coherent with scenario preset + overall utilization.
+   */
+  mockComputeMarket() {
+    const preset = SCENARIOS[this.sim.preset] || SCENARIOS.NONE;
+    const k = Math.max(0, Math.min(1, this.sim.intensity));
+    const utilBase = 0.72;
+    const util = Math.min(0.98, utilBase * (1 + (preset.utilMul - 1) * k));
+
+    const providerCount = 14;
+    const providers = Array.from({ length: providerCount }, (_, i) => {
+      const cap = Math.floor(400 + this.rng() * 800); // compute units
+      const used = Math.floor(cap * (util * (0.85 + this.rng() * 0.30)));
+      return {
+        provider_id: `compute-0x${String(i + 1).padStart(2, '0')}`,
+        capacity_units: cap,
+        used_units: Math.min(cap, used),
+        price_per_unit: parseFloat((0.001 + this.rng() * 0.002).toFixed(5)), // BLOCK/unit
+        sla_uptime: parseFloat((0.96 + this.rng() * 0.04).toFixed(4)),
+        active_jobs: Math.floor(1 + this.rng() * 5),
+        reputation: parseFloat((880 + this.rng() * 110).toFixed(0)),
+      };
+    });
+
+    const total_capacity = providers.reduce((s, p) => s + p.capacity_units, 0);
+    const total_used = providers.reduce((s, p) => s + p.used_units, 0);
+    const avg_utilization = total_capacity > 0 ? total_used / total_capacity : util;
+    const active_jobs = providers.reduce((s, p) => s + p.active_jobs, 0);
+    const pending = Math.floor(3 + this.rng() * 10);
+
+    return {
+      providers,
+      total_capacity,
+      total_used,
+      avg_utilization,
+      industrial_utilization: avg_utilization,
+      industrial_backlog: pending,
+      active_jobs,
+      pending,
+      volume_24h_block: Math.round(active_jobs * 120 * avg_utilization * (1 + this.rng() * 0.4)),
+    };
+  }
+
+  /**
+   * Storage market synthetic localnet state.
+   */
+  mockStorageMarket() {
+    const preset = SCENARIOS[this.sim.preset] || SCENARIOS.NONE;
+    const k = Math.max(0, Math.min(1, this.sim.intensity));
+    const utilBase = 0.61;
+    const util = Math.min(0.97, utilBase * (1 + (preset.utilMul - 1) * k));
+
+    const providerCount = 22;
+    const providers = Array.from({ length: providerCount }, (_, i) => {
+      const cap_gb = Math.floor(500 + this.rng() * 2000);
+      const used_gb = Math.floor(cap_gb * (util * (0.80 + this.rng() * 0.35)));
+      return {
+        provider_id: `storage-0x${String(i + 1).padStart(2, '0')}`,
+        capacity_gb: cap_gb,
+        used_gb: Math.min(cap_gb, used_gb),
+        price_per_gb_block: parseFloat((0.0001 + this.rng() * 0.0003).toFixed(6)),
+        reputation: parseFloat((860 + this.rng() * 130).toFixed(0)),
+        region: ['us-east', 'us-west', 'eu-central', 'ap-southeast'][i % 4],
+      };
+    });
+
+    const total_capacity_gb = providers.reduce((s, p) => s + p.capacity_gb, 0);
+    const total_used_gb = providers.reduce((s, p) => s + p.used_gb, 0);
+    const avg_utilization = total_capacity_gb > 0 ? total_used_gb / total_capacity_gb : util;
+
+    return {
+      providers,
+      total_capacity_gb,
+      total_used_gb,
+      avg_utilization,
+      volume_24h_block: Math.round(total_used_gb * 0.01 * (1 + this.rng() * 0.5)),
+    };
+  }
+
+  /**
    * Mock Mempool Data
    * Real-time transaction pool with fee lanes and admission tracking
    */
   mockMempool() {
     const now = Date.now();
     const currentTPS = this.getRealisticTPS();
-    const maxTPS = 500; // Theoretical max
+    const maxTPS = BLOCK_MAX_TPS; // 10,000 — mirrors receipts_validation.rs, not a guess
     
     // Base pending count scales with network maturity
     const maturityFactor = Math.min(1.0, this.currentEmission / 10_000_000);
     const basePending = Math.floor(50 + maturityFactor * 150); // 50 early → 200 mature
-    const actualPending = Math.floor(basePending * (0.8 + Math.random() * 0.4));
+    const actualPending = Math.floor(basePending * (0.8 + this.rng() * 0.4));
     
     // Fee lanes distribution
     const lanes = {
@@ -989,8 +1484,8 @@ class MockDataManager {
     const transactions = [];
     Object.entries(lanes).forEach(([lane, laneData]) => {
       for (let i = 0; i < laneData.pending; i++) {
-        const age = Math.random() * 120000; // 0-120 seconds
-        const feeFactor = 0.7 + Math.random() * 0.6; // 0.7-1.3x
+        const age = this.rng() * 120000; // 0-120 seconds
+        const feeFactor = 0.7 + this.rng() * 0.6; // 0.7-1.3x
         
         transactions.push({
           id: `${lane}-${Date.now()}-${i}`,
@@ -998,17 +1493,17 @@ class MockDataManager {
           lane,
           from: `addr_${this.randomHex(40)}`,
           to: `addr_${this.randomHex(40)}`,
-          value: Math.floor(Math.random() * 10000000000), // 0-10000 BLOCK
+          value: Math.floor(this.rng() * 10000000000), // 0-10000 BLOCK
           fee: Math.floor(laneData.avg_fee * feeFactor),
-          size: 200 + Math.floor(Math.random() * 1000),
+          size: 200 + Math.floor(this.rng() * 1000),
           timestamp: now - age,
           priority: age < 5000 ? 'high' : age < 30000 ? 'medium' : 'low',
         });
       }
     });
 
-    // Base fee (EIP-1559 style)
-    const base_fee = 20000 + this.noise(3000);
+    // Base fee (EIP-1559 style) — driven by shared currentBaseFee, not an independent draw
+    const base_fee = Math.round((this.currentBaseFee || 25000) * (1 + this.noise(0.05)));
     const base_fee_trend = this.noise(5); // ±5% change
 
     return {
@@ -1063,12 +1558,12 @@ class MockDataManager {
     
     markets.forEach(mkt => {
       for (let i = 0; i < providersPerMarket; i++) {
-        const uptimePct = 94 + Math.random() * 6; // 94-100%
-        const marginPct = -5 + Math.random() * 30; // -5% to 25%
-        const reliabilityScore = 0.85 + Math.random() * 0.15; // 0.85-1.0
-        const settlementVolume = Math.floor(10000 + Math.random() * 1000000);
-        const disputes = Math.random() < 0.15 ? Math.floor(Math.random() * 3) + 1 : 0;
-        const streakDays = Math.floor(Math.random() * 90);
+        const uptimePct = 94 + this.rng() * 6; // 94-100%
+        const marginPct = -5 + this.rng() * 30; // -5% to 25%
+        const reliabilityScore = 0.85 + this.rng() * 0.15; // 0.85-1.0
+        const settlementVolume = Math.floor(10000 + this.rng() * 1000000);
+        const disputes = this.rng() < 0.15 ? Math.floor(this.rng() * 3) + 1 : 0;
+        const streakDays = Math.floor(this.rng() * 90);
         
         // Badge determination
         let badge = null;
@@ -1119,28 +1614,70 @@ class MockDataManager {
     };
   }
 
-  // Utility: Random hex string
-  randomHex(length) {
-    const chars = '0123456789abcdef';
-    let result = '';
-    for (let i = 0; i < length; i++) {
-      result += chars[Math.floor(Math.random() * chars.length)];
-    }
-    return result;
-  }
 
   // Utility: Gaussian noise with mean 0
   noise(stddev) {
-    // Box-Muller transform for Gaussian distribution
-    const u1 = Math.random();
-    const u2 = Math.random();
+    // Box-Muller transform for Gaussian distribution using deterministic RNG
+    let u1 = 0, u2 = 0;
+    while (u1 === 0) u1 = this.rng(); // Converting [0,1) to (0,1)
+    while (u2 === 0) u2 = this.rng();
     const z0 = Math.sqrt(-2.0 * Math.log(u1)) * Math.cos(2.0 * Math.PI * u2);
     return z0 * stddev;
   }
 
   // Utility: Random integer in range [min, max]
   random(min, max) {
-    return Math.floor(Math.random() * (max - min + 1)) + min;
+    return Math.floor(this.rng() * (max - min + 1)) + min;
+  }
+
+  // Utility: Random hex string of given character length
+  randomHex(len) {
+    let result = '';
+    while (result.length < len) {
+      result += Math.floor(this.rng() * 0xFFFFFFFF).toString(16).padStart(8, '0');
+    }
+    return result.slice(0, len);
+  }
+
+  // ── Invariant assertions (mock mode) ─────────────────────────────────────────────
+  validateInvariants() {
+    const errors = [];
+
+    // Protocol Capacity invariants
+    const issuance = this.mockData.issuance || {};
+    if (issuance.max_tps != null && issuance.max_tps !== BLOCK_MAX_TPS) {
+      errors.push(`issuance.max_tps (${issuance.max_tps}) != BLOCK_MAX_TPS (${BLOCK_MAX_TPS})`);
+    }
+    if (issuance.target_tps != null && issuance.target_tps !== BLOCK_TARGET_TPS) {
+      errors.push(`issuance.target_tps (${issuance.target_tps}) != BLOCK_TARGET_TPS (${BLOCK_TARGET_TPS})`);
+    }
+
+    // DEX/orderbook invariants
+    const ob = this.mockData.orderBook || {};
+    const mid = Number(ob.mid_price ?? ob.midPrice);
+    if (Number.isFinite(mid)) {
+      const bids = Array.isArray(ob.bids) ? ob.bids : [];
+      const asks = Array.isArray(ob.asks) ? ob.asks : [];
+      const bestBid = bids.length ? Number(bids[0]?.price ?? bids[0]?.[0]) : null;
+      const bestAsk = asks.length ? Number(asks[0]?.price ?? asks[0]?.[0]) : null;
+      if (bestBid != null && bestAsk != null && bestBid > bestAsk) {
+        errors.push(`orderBook crossed: bestBid (${bestBid}) > bestAsk (${bestAsk})`);
+      }
+      if (bestBid != null && mid < bestBid * 0.90) {
+        errors.push(`orderBook mid too low vs bid: mid (${mid}) < 0.90*bestBid (${bestBid})`);
+      }
+      if (bestAsk != null && mid > bestAsk * 1.10) {
+        errors.push(`orderBook mid too high vs ask: mid (${mid}) > 1.10*bestAsk (${bestAsk})`);
+      }
+    }
+
+    this.mockData.invariants = { ok: errors.length === 0, errors, timestamp: Date.now() };
+
+    // Emit warnings to console in dev mode
+    if (errors.length) {
+      console.warn('[MockDataManager] Invariant violations:', errors);
+    }
+    return this.mockData.invariants;
   }
 }
 

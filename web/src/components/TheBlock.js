@@ -7,6 +7,7 @@ import appState from '../state.js';
 import { bind } from '../bind.js';
 import { fmt, $ } from '../utils.js';
 import perf from '../perf.js';
+import mockDataManager from '../mock-data-manager.js';
 
 class TheBlock extends Component {
   constructor(rpc) {
@@ -76,6 +77,13 @@ class TheBlock extends Component {
       }
       
       // Transform RPC response to component state
+      const issuanceState = mockDataManager.get('issuance') || {};
+      // max_tps comes from the issuance mock/live schema — derived from receipts_validation.rs.
+      // Protocol ceiling: 10,000 TPS (10 MB block budget ÷ 1 KB min receipt ÷ 1s blocks).
+      // Fallback only fires before first mock tick; once data loads this will always be 10,000.
+      const maxTps = issuanceState.max_tps || 10_000;
+      const hourlyIssuance = Math.round((issuanceState.final_reward || 0) * 3600);
+
       const metrics = {
         tps: data.tps || 0,
         fees: data.fees || 0,
@@ -83,8 +91,9 @@ class TheBlock extends Component {
         peers: data.activePeers || 0,
         blockHeight: data.blockHeight || 0,
         finalizedHeight: data.finalizedHeight || 0,
-        issuance: Math.round((data.tps || 0) * 3600 * 0.1), // Estimated: TPS * 1hr * 0.1 BLOCK/tx
+        issuance: hourlyIssuance,
         avgBlockTime: data.avgBlockTime || 0,
+        __maxTps: maxTps,
       };
       
       appState.set('metrics', metrics);
@@ -247,7 +256,8 @@ class TheBlock extends Component {
         unconfirmedEl.textContent = fmt.num(unconfirmed);
       }
 
-      const networkLoad = data.tps ? `${Math.min(100, Math.round((data.tps / 1000) * 100))}%` : '—';
+      const maxTps = data.__maxTps || 500;
+      const networkLoad = data.tps ? `${Math.min(100, Math.round((data.tps / maxTps) * 100))}%` : '—';
       const networkLoadEl = $('#network-load');
       if (networkLoadEl) {
         networkLoadEl.textContent = networkLoad;
@@ -255,12 +265,15 @@ class TheBlock extends Component {
 
       const validatorEl = $('#validator-count');
       if (validatorEl) {
-        validatorEl.textContent = '—'; // TODO: Get from RPC
+        const validators = mockDataManager.get('validators') || [];
+        validatorEl.textContent = validators.length ? fmt.num(validators.length) : '—';
       }
 
       const supplyEl = $('#total-supply');
       if (supplyEl) {
-        supplyEl.textContent = '—'; // TODO: Get from RPC
+        const issuance = mockDataManager.get('issuance') || {};
+        const totalEmission = issuance.total_emission ?? issuance.totalEmission;
+        supplyEl.textContent = typeof totalEmission === 'number' ? `${fmt.num(Math.round(totalEmission))} BLOCK` : '—';
       }
 
       const statusEl = $('#chain-status');
@@ -280,14 +293,19 @@ class TheBlock extends Component {
     // Clear previous content
     section.innerHTML = '';
 
-    const priceHistory = appState.get('priceHistory') || [];
+    const tpsHistoryRaw = appState.get('tpsHistory') || mockDataManager.get('tpsHistory') || [];
+    // Extract just the numeric values from the {timestamp, value} objects, take last 10
+    const tpsValues = tpsHistoryRaw.length > 0 
+      ? tpsHistoryRaw.slice(-10).map(p => Math.round(p.value))
+      : [10, 15, 12, 18, 20, 15, 22, 19, 16, 21];
+
     const orders = appState.get('orders') || [];
 
     // Throughput chart card
     const perfCard = document.createElement('div');
     perfCard.className = 'card';
     perfCard.innerHTML = '<h3>Throughput History (10 blocks)</h3><p class="muted small mb-4">Recent transaction processing rate</p>';
-    perfCard.appendChild(this.createMiniBars(priceHistory.length ? priceHistory : [10, 15, 12, 18, 20, 15, 22, 19, 16, 21]));
+    perfCard.appendChild(this.createMiniBars(tpsValues));
     section.appendChild(perfCard);
 
     // Recent orders card
@@ -301,10 +319,14 @@ class TheBlock extends Component {
   createMiniBars(values) {
     const wrap = document.createElement('div');
     wrap.className = 'chart';
+    const maxVal = Math.max(...values, 1);
+    const CHART_MAX_PX = 120;
+    const CHART_MIN_PX = 8;
     values.forEach((v) => {
       const bar = document.createElement('div');
       bar.className = 'bar';
-      bar.style.height = `${v + 20}px`;
+      const heightPx = Math.round(CHART_MIN_PX + ((v / maxVal) * (CHART_MAX_PX - CHART_MIN_PX)));
+      bar.style.height = `${heightPx}px`;
       bar.title = `${v} TPS`;
       wrap.appendChild(bar);
     });

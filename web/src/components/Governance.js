@@ -11,6 +11,7 @@
 
 import { Component } from '../lifecycle.js';
 import appState from '../state.js';
+import { Capabilities } from '../capabilities.js';
 import DataTable from './DataTable.js';
 import Modal from './Modal.js';
 import { fmt, $ } from '../utils.js';
@@ -131,7 +132,10 @@ class Governance extends Component {
     this.renderActiveView();
 
     const createBtn = $('#create-proposal-btn');
-    if (createBtn) this.listen(createBtn, 'click', () => this.showCreateProposalModal());
+    if (createBtn) {
+      this.listen(createBtn, 'click', () => this.showCreateProposalModal());
+      Capabilities.bindButton(createBtn, 'global', 'settlement');
+    }
 
     const paramsBtn = $('#view-params-btn');
     if (paramsBtn) this.listen(paramsBtn, 'click', () => this.showParametersModal());
@@ -268,7 +272,7 @@ class Governance extends Component {
           }},
           { key: 'created_at', label: 'Created', sortable: true, format: 'datetime' },
         ],
-         proposals,
+          proposals,
         selectable: true,
         pageSize: 25,
         rowActions: [
@@ -397,6 +401,7 @@ class Governance extends Component {
 
       const submitBtn = $('#submit-proposal');
       if (submitBtn) {
+        Capabilities.bindButton(submitBtn, 'global', 'settlement');
         submitBtn.addEventListener('click', async () => {
           await this.createProposal();
           modal.close();
@@ -481,9 +486,37 @@ class Governance extends Component {
       `,
     });
     modal.open();
+
+    setTimeout(() => {
+      const closeBtn = $('#close-detail');
+      if (closeBtn) closeBtn.addEventListener('click', () => modal.close());
+
+      const voteForBtn = $('#vote-for-detail');
+      if (voteForBtn) {
+        Capabilities.bindButton(voteForBtn, 'global', 'settlement');
+        voteForBtn.addEventListener('click', async () => {
+          await this.voteFor(proposal);
+          modal.close();
+        });
+      }
+
+      const voteAgainstBtn = $('#vote-against-detail');
+      if (voteAgainstBtn) {
+        Capabilities.bindButton(voteAgainstBtn, 'global', 'settlement');
+        voteAgainstBtn.addEventListener('click', async () => {
+          await this.voteAgainst(proposal);
+          modal.close();
+        });
+      }
+    }, 100);
   }
 
   async createProposal() {
+    const check = Capabilities.canPerformAction('global', 'settlement');
+    if (!check.allowed) {
+      this.showNotification(check.reason, 'error');
+      return;
+    }
     const form = $('#create-proposal-form');
     if (!form) return;
 
@@ -510,6 +543,11 @@ class Governance extends Component {
   }
 
   async voteFor(proposal) {
+    const check = Capabilities.canPerformAction('global', 'settlement');
+    if (!check.allowed) {
+      this.showNotification(check.reason, 'error');
+      return;
+    }
     try {
       console.log('[Governance] Voting FOR proposal:', proposal.id);
       await this.rpc.call('governance.vote', {
@@ -526,6 +564,11 @@ class Governance extends Component {
   }
 
   async voteAgainst(proposal) {
+    const check = Capabilities.canPerformAction('global', 'settlement');
+    if (!check.allowed) {
+      this.showNotification(check.reason, 'error');
+      return;
+    }
     try {
       console.log('[Governance] Voting AGAINST proposal:', proposal.id);
       await this.rpc.call('governance.vote', {

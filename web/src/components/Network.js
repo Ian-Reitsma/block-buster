@@ -8,6 +8,7 @@ import { bind } from '../bind.js';
 import { fmt, $ } from '../utils.js';
 import perf from '../perf.js';
 import errorBoundary from '../errors.js';
+import mockDataManager from '../mock-data-manager.js';
 
 class Network extends Component {
   constructor(rpc) {
@@ -58,6 +59,18 @@ class Network extends Component {
           tps: networkOverview.stats.tps || 0,
           block_time_ms: networkOverview.stats.avgBlockTime || 0,
           network_strength: this.calculateNetworkStrength(networkOverview.stats),
+          // Network load % — normalised against max_tps from issuance schema.
+          // Protocol ceiling: 10,000 TPS (receipts_validation.rs: RECEIPT_BYTE_BUDGET /
+          // MIN_RECEIPT_BYTE_FLOOR = 10 MB / 1 KB = 10,000 receipts/block ÷ 1s).
+          // Fallback 10,000 fires only before first mock tick.
+          network_load: (() => {
+            const issuance = mockDataManager.get('issuance') || {};
+            const maxTps   = issuance.max_tps || 10_000;
+            const tps      = networkOverview.stats.tps || 0;
+            return maxTps > 0 ? Math.min(100, Math.round((tps / maxTps) * 100)) : 0;
+          })(),
+          network_max_tps:    (mockDataManager.get('issuance') || {}).max_tps    || 10_000,
+          network_target_tps: (mockDataManager.get('issuance') || {}).target_tps ||  6_000,
         },
         markets: marketStates,
         scheduler: schedulerStats,
@@ -88,11 +101,20 @@ class Network extends Component {
   }
 
   calculateNetworkStrength(stats) {
+    // Use target_tps (EIP-1559 fee controller target, 60% of max capacity = 6,000 TPS) as
+    // the reference, not max_tps (10,000). This way the health check asks:
+    //   "is the network sustaining at least 2% of its target throughput?"
+    // = 6,000 × 0.02 = 120 TPS — a reasonable floor for a live early-network with 20-30 miners.
+    // Pre-mock-init fallback: 6,000 (BLOCK_TARGET_TPS) so the card shows 'Weak' not 'Strong'
+    // when no data has loaded yet (0 TPS does not pass 120 TPS threshold).
+    const issuance   = mockDataManager.get('issuance') || {};
+    const targetTps  = issuance.target_tps || 6_000;
+    const tpsHealthy = (stats.tps || 0) >= targetTps * 0.02; // ≥2% of target = ~120 TPS
     const factors = [
       (stats.total || 0) > 10 ? 1 : 0,
-      (stats.active || 0) > 5 ? 1 : 0,
-      (stats.avgLatency || 0) < 100 ? 1 : 0,
-      (stats.tps || 0) > 0 ? 1 : 0,
+      (stats.active || 0) > 5  ? 1 : 0,
+      (stats.avgLatency || 999) < 100 ? 1 : 0,
+      tpsHealthy ? 1 : 0,
     ];
     const score = factors.reduce((a, b) => a + b, 0);
     return score >= 3 ? 'Strong' : score >= 2 ? 'Moderate' : 'Weak';
@@ -155,6 +177,14 @@ class Network extends Component {
         <h3>Network Strength</h3>
         <div class="value" data-bind="network_strength">—</div>
         <div class="label">Health score</div>
+      </div>
+      <div class="card-metric-hero">
+        <h3>Network Load</h3>
+        <div class="value" id="network-load-pct">—</div>
+        <div class="label" id="network-load-tps-label">— / — TPS</div>
+        <div style="margin-top:6px;height:4px;background:rgba(255,255,255,0.10);border-radius:2px;overflow:hidden;">
+          <div id="network-load-bar" style="height:4px;width:0%;border-radius:2px;background:var(--success);transition:width 0.4s ease,background 0.4s ease;"></div>
+        </div>
       </div>
     `;
     content.appendChild(metricsGrid);
@@ -437,6 +467,27 @@ class Network extends Component {
     const metricsGrid = $('#network-metrics-grid');
     if (metricsGrid && network.metrics) {
       bind(metricsGrid, network.metrics);
+    }
+
+    // Update network load card
+    if (network.metrics) {
+      const pct    = network.metrics.network_load    ?? 0;
+      const maxTps = network.metrics.network_max_tps ?? 500;
+      const tps    = network.metrics.tps             ?? 0;
+
+      const pctEl  = $('#network-load-pct');
+      const lblEl  = $('#network-load-tps-label');
+      const barEl  = $('#network-load-bar');
+
+      if (pctEl)  pctEl.textContent  = `${pct}%`;
+      if (lblEl)  lblEl.textContent  = `${fmt.num(tps)} / ${fmt.num(maxTps)} TPS`;
+      if (barEl) {
+        barEl.style.width      = `${pct}%`;
+        // Green < 50%, amber 50–80%, red > 80%
+        barEl.style.background = pct >= 80 ? 'var(--danger)'
+                                : pct >= 50 ? 'var(--warn)'
+                                : 'var(--success)';
+      }
     }
 
     // Update artifacts

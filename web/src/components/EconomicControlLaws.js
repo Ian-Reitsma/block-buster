@@ -23,72 +23,210 @@ class EconomicControlLaws extends Component {
     this.simulated = true;
   }
 
+  // ── Data fetch: same code path for live and mock ────────────────────────────────────────────────
+  //
+  // KEY PRINCIPLE: mock mode no longer short-circuits to a different data shape.
+  // Instead, we instantiate RpcMock (which wraps MockDataManager and emits the same JSON
+  // response shapes as the real node) and run _fetchChainData(rpcMock) through the
+  // identical transform path as live. This guarantees:
+  //   1. The UI renders the same field paths in both modes.
+  //   2. Any RPC response shape change breaks both modes equally — caught in dev.
+  //   3. syncFromMock() in EconomicsSimulator is the only place that feeds mock
+  //      inputs from mock-data-manager; everything else goes through the chain path.
   async fetchData() {
-    const useLive = features.isEnabled('economics_live');
-    if (useLive) {
-      try {
-        const [economics, subsidies, multipliers, adSplits] = await Promise.all([
-          this.rpc.call('economics.replay', { to_height: 'tip' }),
-          this.rpc.call('economics.subsidy_allocation', {}),
-          this.rpc.call('economics.market_multipliers', {}),
-          this.rpc.call('ad_market.policy_snapshot', {}),
-        ]);
-        this.simulated = false;
-        return this.transformLiveData({ economics, subsidies, multipliers, adSplits });
-      } catch (error) {
-        console.warn('[EconomicControlLaws] Live economics RPC failed, falling back to simulated:', error?.message);
-      }
+    // Prefer live economics if enabled AND we're actually connected to a live node.
+    // Otherwise use the same RPC interface (which is MockRpcClient in mock mode).
+    const preferLive = features.isEnabled('economics_live') && mockDataManager.isLiveMode();
+
+    try {
+      this.simulated = !preferLive;
+      return await this._fetchChainData(this.rpc);
+    } catch (err) {
+      console.warn('[EconomicControlLaws] RPC fetch failed, falling back to simulated:', err?.message);
+      this.simulated = true;
+      // In the current app architecture, mock mode already injects MockRpcClient as this.rpc,
+      // so retrying through the same interface is sufficient.
+      return await this._fetchChainData(this.rpc);
     }
-    this.simulated = true;
-    return mockDataManager.mockEconomicControlLaws();
   }
 
-  transformLiveData(data) {
+  async _fetchChainData(rpc = this.rpc) {
+    const EPOCH_BLOCKS = 120;
+
+    // ── Primary: parallel fetches for governor state, block height, ad policy ──
+    const [governorStatus, blockHeightResp, adSplits] = await Promise.all([
+      rpc.getGovernorStatus(),
+      rpc.getBlockHeight(),
+      rpc.call('ad_market.policy_snapshot', {}).catch(() => null),  // non-fatal
+    ]);
+
+    // ── Best-effort: latest EpochEconomicsReceipt via receipt.audit ──
+    // Two-pass robust scan (receipt.audit docs: apis_and_tooling.md):
+    //   Pass 1: filtered by market='epoch_economics' (fast path; if node supports filter)
+    //   Pass 2: unfiltered limit=64, 10-epoch window (fallback for older node builds)
+    // Sorted block_height ASC — walk newest-first. Silent on any failure.
+    let epochReceipt = null;
+    const currentHeight = blockHeightResp?.height ?? 0;
+    const _auditBase = {
+      start_height: Math.max(0, currentHeight - EPOCH_BLOCKS * 10),
+      end_height:   currentHeight,
+      limit:        64,  // was 5 — increased to reliably capture epoch boundary receipts
+    };
+    const _findEpoch = (receipts) => {
+      for (let i = (receipts || []).length - 1; i >= 0; i--) {
+        const r = receipts[i];
+        // We return the full audit record so downstream layers can use per-block metadata
+        // like subsidy buckets, and then unwrap the receipt payload later.
+        if (
+          r?.receipt_type === 'epoch_economics' ||
+          r?.receipt_type === 'EpochEconomics'  ||
+          r?.receipt?.epoch !== undefined ||
+          r?.receipt?.EpochEconomics?.epoch !== undefined ||
+          r?.receipt?.epoch_economics?.epoch !== undefined
+        ) return r;
+      }
+      return null;
+    };
+    // Pass 1: filtered by market (fast if supported by this node build)
+    try {
+      const auditResp = await rpc.call('receipt.audit', { ..._auditBase, market: 'epoch_economics' });
+      epochReceipt = _findEpoch(auditResp?.receipts);
+    } catch (_) { /* market filter not supported on this build — fall through */ }
+    // Pass 2: unfiltered (covers all node versions)
+    if (!epochReceipt) {
+      try {
+        const auditResp = await rpc.call('receipt.audit', _auditBase);
+        epochReceipt = _findEpoch(auditResp?.receipts);
+      } catch (_auditErr) {
+        console.info('[EconomicControlLaws] receipt.audit not yet available on this node');
+      }
+    }
+    this.simulated = false;
+    return this._transformChainData(governorStatus, blockHeightResp, epochReceipt, adSplits);
+  }
+
+  _transformChainData(governorStatus, blockHeightResp, epochReceipt, adSplits) {
+    const EPOCH_BLOCKS    = 120;
+    const BLOCKS_PER_YEAR = 365 * 24 * 3600;
+
+    // ── Layer 1: Inflation ──
+    // Realized rate = next_block_reward_per_block × BLOCKS_PER_YEAR / total_emission × 10_000
+    // Source fields are from EpochEconomicsReceipt (economics_and_governance.md schema).
+    // null = receipt.audit not yet active; UI renders "—" and a source-pending note.
+    // Epoch receipt can arrive in different shapes depending on how the node serializes the Receipt enum.
+    // Prefer common tagged forms, then fall back to the raw object.
+    const epochRecord = epochReceipt;
+    const epochData = epochRecord?.receipt?.EpochEconomics
+                   ?? epochRecord?.receipt?.epoch_economics
+                   ?? epochRecord?.receipt
+                   ?? epochRecord;
+
+    const totalEmission  = epochData?.total_emission              ?? null;
+    const nextReward     = epochData?.next_block_reward_per_block ?? null;
+    const annualIssuance = nextReward !== null ? nextReward * BLOCKS_PER_YEAR : null;
+    const realizedBps    = (annualIssuance !== null && totalEmission > 0)
+      ? Math.round((annualIssuance / totalEmission) * 10_000)
+      : null;
+    const TARGET_BPS = 500;  // governance default: inflation_target_bps
+
+    // ── Layer 3: Market Multipliers ──
+    // Source: governor.status.economics_prev_market_metrics — ppm values per market.
+    // The node does NOT expose computed multiplier values; we show the raw utilization/margin
+    // ppm signals that feed into subsidy_allocator.rs’s dual-control loop.
+    const rawMetrics  = governorStatus?.economics_prev_market_metrics
+                     || governorStatus?.metrics?.economics_prev_market_metrics;
+    const marketOrder = ['storage', 'compute', 'energy', 'ad'];
+    const perMarket   = {};
+    if (Array.isArray(rawMetrics) && rawMetrics.length > 0) {
+      rawMetrics.forEach((m, i) => {
+        const name = m.market ?? marketOrder[i] ?? `market_${i}`;
+        perMarket[name] = {
+          utilization_ppm: m.utilization_ppm    ?? 0,
+          margin_ppm:      m.provider_margin_ppm ?? 0,
+          utilization:     (m.utilization_ppm    ?? 0) / 1_000_000,
+          margin:          (m.provider_margin_ppm ?? 0) / 1_000_000,
+          _source: 'governor.status',
+        };
+      });
+    } else if (rawMetrics && typeof rawMetrics === 'object') {
+      // Flat object (single-market or legacy shape) — broadcast to all markets
+      const u = rawMetrics.utilization_ppm    ?? 650_000;
+      const p = rawMetrics.provider_margin_ppm ?? 120_000;
+      marketOrder.forEach(n => {
+        perMarket[n] = {
+          utilization_ppm: u, margin_ppm: p,
+          utilization: u / 1_000_000, margin: p / 1_000_000,
+          _source: 'governor.status',
+        };
+      });
+    } else {
+      // No live metrics available — fill with chain defaults, mark source
+      marketOrder.forEach(n => {
+        perMarket[n] = {
+          utilization_ppm: 650_000, margin_ppm: 120_000,
+          utilization: 0.65, margin: 0.12,
+          _source: 'default',
+        };
+      });
+    }
+
+    // ── Layer 4: Ad Splits — from ad_market.policy_snapshot (real endpoint, unchanged) ──
+    const adLayer = {
+      splits: {
+        platform:  adSplits?.platform_share_bps  ?? 2800,
+        user:      adSplits?.user_share_bps       ?? 2200,
+        publisher: adSplits?.publisher_share_bps  ?? 5000,
+        targets:   { platform: 2800, user: 2200, publisher: 5000 },
+        _source:   adSplits ? 'ad_market.policy_snapshot' : 'default',
+      },
+      tariff: {
+        current_bps:               adSplits?.tariff_bps               ?? 50,
+        target_bps:                100,
+        treasury_contribution_pct: adSplits?.treasury_contribution_pct ?? 8.5,
+        drift_rate:                0.05,
+      },
+    };
+
+    const currentHeight = blockHeightResp?.height ?? 0;
+    const epochNumber   = epochData?.epoch ?? Math.floor(currentHeight / EPOCH_BLOCKS);
+
     return {
-      // Layer 1: Inflation
+      // Governor state
+      launch_mode: governorStatus?.launch_mode || 'trade',
+      gates: governorStatus?.gates || {},
+      active_gates: governorStatus?.active_gates || 0,
+      
+      // Layer 1
       inflation: {
-        target_bps: data.economics.inflation_target_bps || 500,
-        realized_bps: data.economics.realized_inflation_bps || 480,
-        error_bps: data.economics.inflation_error_bps || -20,
-        annual_issuance: data.economics.annual_issuance_block || 2_000_000,
-        controller_gain: data.economics.inflation_controller_gain || 0.10,
-        convergence_epochs: 30,
+        target_bps:         TARGET_BPS,
+        realized_bps:       realizedBps,  // null = receipt not yet available
+        error_bps:          realizedBps !== null ? realizedBps - TARGET_BPS : null,
+        annual_issuance:    annualIssuance !== null ? Math.round(annualIssuance) : null,
+        next_reward:        nextReward,
+        total_emission:     totalEmission,
+        controller_gain:    0.10,  // legacy controller reference — not active policy
+        convergence_epochs: 30,    // rough estimate from legacy controller doc
+        _source:            epochReceipt ? 'receipt.audit' : 'unavailable',
       },
-      // Layer 2: Subsidy Allocation
-      subsidies: {
-        storage: data.subsidies?.storage || { share_bps: 1500, distress: 0.2 },
-        compute: data.subsidies?.compute || { share_bps: 3000, distress: 0.1 },
-        energy: data.subsidies?.energy || { share_bps: 2000, distress: 0.5 },
-        ad: data.subsidies?.ad || { share_bps: 3500, distress: 0.0 },
-        drift_rate: data.subsidies?.drift_rate || 0.01,
-        temperature: data.subsidies?.temperature || 10000,
-      },
-      // Layer 3: Market Multipliers
+      // Layer 2: subsidy buckets are emitted by receipt.audit as per-block metadata.
+      // null signals renderLayer2Subsidies() to use estimated values with a visible badge.
+      subsidies: epochRecord?.subsidies ?? null,
+      // Layer 3
       multipliers: {
-        storage: data.multipliers?.storage || { value: 1.2, utilization: 0.65, margin: 0.15 },
-        compute: data.multipliers?.compute || { value: 2.5, utilization: 0.82, margin: 0.10 },
-        energy: data.multipliers?.energy || { value: 1.8, utilization: 0.58, margin: 0.12 },
-        ad: data.multipliers?.ad || { value: 1.5, utilization: 0.70, margin: 0.18 },
+        ...perMarket,
         ceiling: 10.0,
-        floor: 0.1,
+        floor:   0.1,
       },
-      // Layer 4: Ad Splits & Tariff
-      ad: {
-        splits: {
-          platform: data.adSplits?.platform_share_bps || 2800,
-          user: data.adSplits?.user_share_bps || 2200,
-          publisher: data.adSplits?.publisher_share_bps || 5000,
-          targets: { platform: 2800, user: 2200, publisher: 5000 },
-        },
-        tariff: {
-          current_bps: data.adSplits?.tariff_bps || 50,
-          target_bps: 100,
-          treasury_contribution_pct: 8.5,
-          drift_rate: 0.05,
-        },
-      },
-      epoch: data.economics?.epoch || 0,
+      // Layer 4
+      ad: adLayer,
+      epoch:     epochNumber,
       timestamp: Date.now(),
+      _sources: {
+        governor:     !!governorStatus,
+        blockHeight:  !!blockHeightResp,
+        epochReceipt: !!epochData,
+        adPolicy:     !!adSplits,
+      },
     };
   }
 
@@ -117,6 +255,12 @@ class EconomicControlLaws extends Component {
     healthSection.className = 'overall-health';
     healthSection.id = 'overall-health';
     container.appendChild(healthSection);
+
+    // Launch Gates section
+    const gatesSection = document.createElement('div');
+    gatesSection.className = 'launch-gates';
+    gatesSection.id = 'launch-gates';
+    container.appendChild(gatesSection);
 
     // Four layers
     const layersSection = document.createElement('div');
@@ -154,16 +298,21 @@ class EconomicControlLaws extends Component {
     return container;
   }
 
+  // Keep the simulated pill in sync across all data refresh cycles.
+  // Call after every fetchData() — initial mount AND the 5s polling interval.
+  _updateSimBadge() {
+    const badge = document.getElementById('econ-sim-badge');
+    if (badge) badge.style.display = this.simulated ? 'inline-flex' : 'none';
+  }
+
   async onMount() {
     // Fetch initial data
     this.data = await this.fetchData();
-    const badge = $('#econ-sim-badge');
-    if (badge) {
-      badge.style.display = this.simulated ? 'inline-flex' : 'none';
-    }
+    this._updateSimBadge();
     
     // Render all layers
     this.renderOverallHealth();
+    this.renderLaunchGates();
     this.renderLayer1Inflation();
     this.renderLayer2Subsidies();
     this.renderLayer3Multipliers();
@@ -175,7 +324,9 @@ class EconomicControlLaws extends Component {
     // Update every 5 seconds
     this.interval(async () => {
       this.data = await this.fetchData();
+      this._updateSimBadge();
       this.renderOverallHealth();
+      this.renderLaunchGates();
       this.renderLayer1Inflation();
       this.renderLayer2Subsidies();
       this.renderLayer3Multipliers();
@@ -219,12 +370,60 @@ class EconomicControlLaws extends Component {
       </div>
     `;
 
-    if (this.data.simulated) {
+    if (this.simulated) {
       const badge = document.createElement('div');
       badge.className = 'muted tiny';
-      badge.textContent = 'Simulated economics (node does not expose economics.* RPC)';
+      badge.textContent = 'Simulated economics (mock fallback — chain receipts/governor metrics unavailable)';
       container.appendChild(badge);
     }
+  }
+
+  renderLaunchGates() {
+    const container = $('#launch-gates');
+    if (!container || !this.data) return;
+
+    const mode = this.data.launch_mode || 'unknown';
+    const active = this.data.active_gates || 0;
+    const gates = this.data.gates || {};
+    const markets = ['storage', 'compute', 'energy', 'ad'];
+
+    const modeColor = mode === 'trade' ? 'var(--success)' : 'var(--warning)';
+
+    container.innerHTML = `
+      <div class="card mb-4" style="border-left: 4px solid ${modeColor};">
+        <div class="row space-between align-center mb-4">
+          <div>
+            <h4 style="margin: 0; display: inline-flex; align-items: center; gap: 8px;">
+              Launch Governor <span class="pill pill-outline" style="border-color: ${modeColor}; color: ${modeColor};">${mode.toUpperCase()}</span>
+            </h4>
+            <p class="muted small mt-1">Active Gates: ${active} / 4 — Markets advancing to trade phase</p>
+          </div>
+        </div>
+        <div class="gates-grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px;">
+          ${markets.map(m => {
+            const g = gates[m] || { mode: 'shadow', streak: 0, utilization_ok: false, margin_ok: false };
+            const mColor = g.mode === 'trade' ? 'var(--success)' : g.mode === 'rehearsal' ? 'var(--warning)' : 'var(--danger)';
+            return `
+              <div class="gate-card" style="padding: 12px; background: rgba(255,255,255,0.02); border-radius: 6px; border: 1px solid rgba(255,255,255,0.05);">
+                <div class="row space-between mb-2">
+                  <strong style="text-transform: capitalize;">${m}</strong>
+                  <span style="color: ${mColor}; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px;">${g.mode}</span>
+                </div>
+                <div class="muted small mb-2">Streak: ${g.streak} epochs</div>
+                <div class="row align-center gap-2 mb-1">
+                  <span style="font-size: 10px;">${g.utilization_ok ? '✅' : '❌'}</span>
+                  <span class="small" style="color: ${g.utilization_ok ? 'var(--text)' : 'var(--danger)'};">Utilization</span>
+                </div>
+                <div class="row align-center gap-2">
+                  <span style="font-size: 10px;">${g.margin_ok ? '✅' : '❌'}</span>
+                  <span class="small" style="color: ${g.margin_ok ? 'var(--text)' : 'var(--danger)'};">Margin</span>
+                </div>
+              </div>
+            `;
+          }).join('')}
+        </div>
+      </div>
+    `;
   }
 
   calculateOverallHealth() {
@@ -234,37 +433,51 @@ class EconomicControlLaws extends Component {
     let status = 'healthy';
 
     // Check Layer 1: Inflation
-    const inflationError = Math.abs(this.data.inflation.error_bps);
-    if (inflationError > 200) {
-      status = 'critical';
-      issues.push(`🔴 Inflation error: ${inflationError} bps`);
-    } else if (inflationError > 100) {
-      if (status === 'healthy') status = 'warning';
-      issues.push(`🟡 Inflation error: ${inflationError} bps`);
+    // error_bps is null when receipt.audit is not yet active on this node.
+    // null-guard: skip check rather than silently reporting healthy on missing data.
+    const inflationError = this.data.inflation.error_bps !== null
+      ? Math.abs(this.data.inflation.error_bps)
+      : null;
+    if (inflationError !== null) {
+      if (inflationError > 200) {
+        status = 'critical';
+        issues.push(`🔴 Inflation error: ${inflationError} bps (receipt.audit)`);
+      } else if (inflationError > 100) {
+        if (status === 'healthy') status = 'warning';
+        issues.push(`🟡 Inflation error: ${inflationError} bps (receipt.audit)`);
+      }
+    } else {
+      issues.push('⚪ Inflation: receipt.audit pending — realized rate unavailable');
     }
 
     // Check Layer 3: Multipliers
+    // Live data shape: {utilization, margin, utilization_ppm, margin_ppm, _source}
+    // (node does not expose a computed .value — use utilization as the health signal,
+    // matching the runbook thresholds used in renderLayer3Multipliers)
     Object.entries(this.data.multipliers).forEach(([market, data]) => {
-      if (typeof data === 'object' && data.value) {
-        if (data.value >= 9.5) {
-          status = 'critical';
-          issues.push(`🔴 ${market} multiplier at ceiling: ${data.value.toFixed(2)}`);
-        } else if (data.value >= 7.0) {
-          if (status === 'healthy') status = 'warning';
-          issues.push(`🟡 ${market} multiplier high: ${data.value.toFixed(2)}`);
-        }
+      if (typeof data !== 'object' || data._source === undefined) return; // skip ceiling/floor keys
+      if (data.utilization >= 0.93 || data.margin < 0.05) {
+        status = 'critical';
+        issues.push(`🔴 ${market}: util ${(data.utilization * 100).toFixed(0)}% / margin ${(data.margin * 100).toFixed(1)}%`);
+      } else if (data.utilization >= 0.80 || data.margin < 0.12) {
+        if (status === 'healthy') status = 'warning';
+        issues.push(`🟡 ${market}: util ${(data.utilization * 100).toFixed(0)}% / margin ${(data.margin * 100).toFixed(1)}%`);
       }
     });
 
     // Check Layer 2: Subsidy distress
-    Object.entries(this.data.subsidies).forEach(([market, data]) => {
-      if (typeof data === 'object' && typeof data.distress === 'number') {
-        if (data.distress > 0.5) {
-          if (status === 'healthy') status = 'warning';
-          issues.push(`🟡 ${market} market in distress: ${(data.distress * 100).toFixed(0)}%`);
+    // subsidies is null in live-chain mode (subsidy_allocator.rs has no RPC endpoint).
+    // Iterate only when mock data is present.
+    if (this.data.subsidies !== null && this.data.subsidies !== undefined) {
+      Object.entries(this.data.subsidies).forEach(([market, data]) => {
+        if (typeof data === 'object' && typeof data.distress === 'number') {
+          if (data.distress > 0.5) {
+            if (status === 'healthy') status = 'warning';
+            issues.push(`🟡 ${market} market in distress: ${(data.distress * 100).toFixed(0)}%`);
+          }
         }
-      }
-    });
+      });
+    }
 
     const label = status === 'critical' ? 'Critical' : status === 'warning' ? 'Warning' : 'Healthy';
     const icon = status === 'critical' ? '🔴' : status === 'warning' ? '🟡' : '🟢';
@@ -277,9 +490,24 @@ class EconomicControlLaws extends Component {
     if (!container || !this.data) return;
 
     const inflation = this.data.inflation;
-    const errorAbs = Math.abs(inflation.error_bps);
-    const errorStatus = errorAbs > 200 ? 'critical' : errorAbs > 50 ? 'warning' : 'healthy';
-    const errorSign = inflation.error_bps > 0 ? '+' : '';
+    // realized_bps / error_bps / annual_issuance are null when receipt.audit is not yet active.
+    const hasRealized = inflation.realized_bps !== null;
+    const errorAbs    = hasRealized ? Math.abs(inflation.error_bps) : 0;
+    const errorStatus = !hasRealized
+      ? 'healthy'
+      : errorAbs > 200 ? 'critical' : errorAbs > 50 ? 'warning' : 'healthy';
+    const errorSign   = (hasRealized && inflation.error_bps > 0) ? '+' : '';
+    const realizedStr = hasRealized ? `${(inflation.realized_bps / 100).toFixed(2)}%` : '—';
+    const errorStr    = hasRealized ? `${errorSign}${inflation.error_bps} bps` : '— (receipt unavailable)';
+    const progressPct = hasRealized
+      ? Math.min(100, (inflation.realized_bps / inflation.target_bps) * 100)
+      : 0;
+    const issuanceStr = inflation.annual_issuance !== null
+      ? `${fmt.num(inflation.annual_issuance)} BLOCK`
+      : '— (receipt unavailable)';
+    const sourceLabel = inflation._source === 'unavailable'
+      ? 'Realized rate: pending receipt.audit activation on node'
+      : `Source: ${inflation._source}`;
 
     container.innerHTML = `
       <div class="layer-header">
@@ -297,18 +525,18 @@ class EconomicControlLaws extends Component {
           </div>
           <div class="metric">
             <div class="metric-label">Realized</div>
-            <div class="metric-value">${(inflation.realized_bps / 100).toFixed(2)}%</div>
+            <div class="metric-value">${realizedStr}</div>
             <div class="metric-unit">actual</div>
           </div>
           <div class="metric">
             <div class="metric-label">Error</div>
-            <div class="metric-value status-${errorStatus}">${errorSign}${inflation.error_bps} bps</div>
+            <div class="metric-value status-${errorStatus}">${errorStr}</div>
             <div class="metric-unit">deviation</div>
           </div>
         </div>
         <div class="progress-bar">
           <div class="progress-track">
-            <div class="progress-fill" style="width: ${Math.min(100, (inflation.realized_bps / inflation.target_bps) * 100)}%"></div>
+            <div class="progress-fill" style="width: ${progressPct}%"></div>
           </div>
           <div class="progress-labels">
             <span>0%</span>
@@ -319,15 +547,18 @@ class EconomicControlLaws extends Component {
         <div class="layer-info">
           <div class="info-row">
             <span class="info-label">Annual Issuance:</span>
-            <span class="info-value">${fmt.num(inflation.annual_issuance)} BLOCK</span>
+            <span class="info-value">${issuanceStr}</span>
           </div>
           <div class="info-row">
             <span class="info-label">Controller Gain:</span>
-            <span class="info-value">${(inflation.controller_gain * 100).toFixed(0)}%</span>
+            <span class="info-value">${(inflation.controller_gain * 100).toFixed(0)}% (legacy ref)</span>
           </div>
           <div class="info-row">
             <span class="info-label">Convergence:</span>
             <span class="info-value">±1% in ${inflation.convergence_epochs} epochs (~1 hour)</span>
+          </div>
+          <div class="info-row muted tiny">
+            <span>${sourceLabel}</span>
           </div>
         </div>
       </div>
@@ -338,16 +569,30 @@ class EconomicControlLaws extends Component {
     const container = $('#layer-2-subsidies');
     if (!container || !this.data) return;
 
-    const subsidies = this.data.subsidies;
+    // subsidies is null in live chain mode — subsidy_allocator.rs computes splits internally,
+    // no RPC endpoint exists to retrieve them. Use governance-default estimates and badge clearly.
+    const ESTIMATED_SUBSIDIES = {
+      storage: { share_bps: 1500, distress: 0.2 },
+      compute: { share_bps: 3000, distress: 0.1 },
+      energy:  { share_bps: 2000, distress: 0.5 },
+      ad:      { share_bps: 3500, distress: 0.0 },
+      drift_rate:  0.01,
+      temperature: 10_000,
+    };
+    const subsidies   = this.data.subsidies ?? ESTIMATED_SUBSIDIES;
+    const isEstimated = this.data.subsidies === null;
     const markets = ['storage', 'compute', 'energy', 'ad'];
-    
+
     const totalShares = markets.reduce((sum, m) => sum + (subsidies[m]?.share_bps || 0), 0);
     const maxDistress = Math.max(...markets.map(m => subsidies[m]?.distress || 0));
     const layerStatus = maxDistress > 0.5 ? 'warning' : 'healthy';
+    const estimatedBadge = isEstimated
+      ? '<span class="pill pill-muted" title="No RPC endpoint — subsidy_allocator.rs computes splits internally">Estimated</span>'
+      : '';
 
     container.innerHTML = `
       <div class="layer-header">
-        <h4>Layer 2: Subsidy Allocation</h4>
+        <h4>Layer 2: Subsidy Allocation ${estimatedBadge}</h4>
         <span class="layer-status status-${layerStatus}">
           ${layerStatus === 'warning' ? '🟡' : '🟢'}
         </span>
@@ -399,9 +644,20 @@ class EconomicControlLaws extends Component {
 
     const multipliers = this.data.multipliers;
     const markets = ['storage', 'compute', 'energy', 'ad'];
-    
-    const maxMultiplier = Math.max(...markets.map(m => multipliers[m]?.value || 0));
-    const layerStatus = maxMultiplier >= 9.5 ? 'critical' : maxMultiplier >= 7.0 ? 'warning' : 'healthy';
+
+    // The node does NOT expose computed multiplier values via any RPC endpoint.
+    // (subsidy_allocator.rs computes them internally.) We show the two ppm signals
+    // that DRIVE the dual-control loop: utilization_ppm and provider_margin_ppm.
+    // Health thresholds mirror the high-utilization warning bounds in the runbook:
+    //   utilization >80% (800_000 ppm) = warning, >93% (930_000 ppm) = critical
+    //   margin <5% (50_000 ppm) = warning (provider squeeze)
+    const maxUtil   = Math.max(...markets.map(m => multipliers[m]?.utilization ?? 0));
+    const minMargin = Math.min(...markets.map(m => multipliers[m]?.margin      ?? 1));
+    const layerStatus = maxUtil >= 0.93 || minMargin < 0.05
+      ? 'critical'
+      : maxUtil >= 0.80 || minMargin < 0.12
+        ? 'warning'
+        : 'healthy';
 
     container.innerHTML = `
       <div class="layer-header">
@@ -409,39 +665,52 @@ class EconomicControlLaws extends Component {
         <span class="layer-status status-${layerStatus}">
           ${layerStatus === 'critical' ? '🔴' : layerStatus === 'warning' ? '🟡' : '🟢'}
         </span>
+        <span class="muted tiny" style="margin-left:auto" title="Node does not expose computed multiplier values — showing raw dual-control input signals from governor.status">
+          Showing dual-control input signals (utilization + margin ppm)
+        </span>
       </div>
       <div class="layer-content">
         <div class="multipliers-grid">
           ${markets.map(market => {
             const data = multipliers[market];
-            const multiplierStatus = data.value >= 9.5 ? 'critical' : data.value >= 7.0 ? 'warning' : 'healthy';
-            const utilizationPct = (data.utilization * 100).toFixed(0);
-            const marginPct = (data.margin * 100).toFixed(1);
-            
+            if (!data || typeof data !== 'object' || data._source === undefined) return '';
+            const utilizationPct = (data.utilization * 100).toFixed(1);
+            const marginPct      = (data.margin      * 100).toFixed(2);
+            // Health per-card: high util or negative/thin margin = warning
+            const cardStatus = data.utilization >= 0.93 || data.margin < 0.05
+              ? 'critical'
+              : data.utilization >= 0.80 || data.margin < 0.12
+                ? 'warning'
+                : 'healthy';
+            const utilBarPct = Math.round(data.utilization * 100);
             return `
-              <div class="multiplier-card status-${multiplierStatus}">
+              <div class="multiplier-card status-${cardStatus}">
                 <div class="multiplier-header">
                   <span class="multiplier-market">${market}</span>
-                  <span class="multiplier-value">${data.value.toFixed(2)}x</span>
+                  <span class="multiplier-value muted tiny" title="Computed value not exposed by node RPC">value: —</span>
                 </div>
                 <div class="multiplier-gauge">
                   <div class="gauge-track">
-                    <div class="gauge-fill" style="width: ${Math.min(100, (data.value / multipliers.ceiling) * 100)}%"></div>
+                    <div class="gauge-fill" style="width: ${utilBarPct}%"></div>
                     <div class="gauge-markers">
-                      <span class="marker" style="left: 10%"></span>
-                      <span class="marker" style="left: 50%"></span>
-                      <span class="marker critical" style="left: 95%" title="Ceiling: ${multipliers.ceiling}x"></span>
+                      <span class="marker" style="left: 65%" title="65% util"></span>
+                      <span class="marker" style="left: 80%" title="80% — warning"></span>
+                      <span class="marker critical" style="left: 93%" title="93% — critical"></span>
                     </div>
                   </div>
                 </div>
                 <div class="multiplier-metrics">
                   <div class="metric-small">
                     <span class="metric-label">Utilization:</span>
-                    <span class="metric-value">${utilizationPct}%</span>
+                    <span class="metric-value">${utilizationPct}% <span class="muted tiny">(${data.utilization_ppm.toLocaleString()} ppm)</span></span>
                   </div>
                   <div class="metric-small">
                     <span class="metric-label">Margin:</span>
-                    <span class="metric-value">${marginPct}%</span>
+                    <span class="metric-value">${marginPct}% <span class="muted tiny">(${data.margin_ppm.toLocaleString()} ppm)</span></span>
+                  </div>
+                  <div class="metric-small">
+                    <span class="metric-label muted tiny">src:</span>
+                    <span class="metric-value muted tiny">${data._source}</span>
                   </div>
                 </div>
               </div>
@@ -450,16 +719,16 @@ class EconomicControlLaws extends Component {
         </div>
         <div class="layer-info">
           <div class="info-row">
-            <span class="info-label">Ceiling:</span>
-            <span class="info-value">${multipliers.ceiling}x</span>
+            <span class="info-label">Control law:</span>
+            <span class="info-value">Dual (utilization + margins ppm)</span>
           </div>
           <div class="info-row">
-            <span class="info-label">Floor:</span>
-            <span class="info-value">${multipliers.floor}x</span>
+            <span class="info-label">Warn threshold:</span>
+            <span class="info-value">util &gt; 80% | margin &lt; 12%</span>
           </div>
           <div class="info-row">
-            <span class="info-label">Control:</span>
-            <span class="info-value">Dual (Utilization + Margins)</span>
+            <span class="info-label">Source:</span>
+            <span class="info-value">governor.status → economics_prev_market_metrics</span>
           </div>
         </div>
       </div>

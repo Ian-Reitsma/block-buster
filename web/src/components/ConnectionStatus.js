@@ -1,15 +1,17 @@
 // Connection status indicator component
-// Shows real-time WebSocket/polling connection status
+// Shows transport + authority status (LIVE node vs MOCK synthetic)
 
 import { Component } from '../lifecycle.js';
 import appState from '../state.js';
 import { $ } from '../utils.js';
+import RpcCompatModal from './RpcCompatModal.js';
 
 class ConnectionStatus extends Component {
   constructor() {
     super('ConnectionStatus');
     this.container = null;
     this.status = 'connecting'; // 'connected' | 'connecting' | 'disconnected'
+    this.label = 'Detecting…';
   }
 
   onMount() {
@@ -18,7 +20,7 @@ class ConnectionStatus extends Component {
       this.container = document.createElement('div');
       this.container.id = 'connection-status';
       this.container.className = 'connection-status connecting';
-      
+
       // Add to navigation
       const nav = $('.nav');
       if (nav) {
@@ -28,78 +30,73 @@ class ConnectionStatus extends Component {
 
     this.render();
 
-    // Subscribe to WebSocket state
-    this.subscribe(appState, 'ws', (wsState) => {
-      if (appState.get('offline')) return;
-      if (wsState?.connected) {
-        this.setStatus('connected');
-      } else {
-        this.setStatus('connecting');
-      }
-    });
-
-    // Subscribe to offline flag
-    this.subscribe(appState, 'offline', (offline) => {
-      this.setStatus(offline ? 'disconnected' : 'connected');
-    });
-
-    // Connection mode (LIVE/MOCK) should still read as connected
-    this.subscribe(appState, 'connectionMode', (mode) => {
-      if (mode === 'LIVE' || mode === 'MOCK') {
-        this.setStatus('connected');
-      }
-    });
-
-    // Metrics updates also imply connectivity
-    this.subscribe(appState, 'metrics', () => {
-      this.setStatus('connected');
-    });
+    // Recompute on any relevant state change.
+    this.subscribe(appState, 'offline', () => this.updateFromState());
+    this.subscribe(appState, 'connectionMode', () => this.updateFromState());
+    this.subscribe(appState, 'ws', () => this.updateFromState());
+    this.subscribe(appState, 'rpcCompat', () => this.updateFromState());
 
     // Initial status based on already-known state
     this.updateFromState();
   }
 
-  setStatus(newStatus) {
-    if (this.status === newStatus) return;
-    
-    this.status = newStatus;
-    this.render();
-  }
-
   updateFromState() {
     const offline = appState.get('offline');
     const wsState = appState.get('ws');
-    const mode = appState.get('connectionMode');
+    const mode = appState.get('connectionMode') || 'DETECTING';
 
     if (offline) {
-      this.setStatus('disconnected');
+      this.status = 'disconnected';
+      this.label = 'Disconnected';
+      this.render();
       return;
     }
-    if (wsState?.connected) {
-      this.setStatus('connected');
+
+    if (mode === 'MOCK') {
+      // Synthetic localnet: UI is "up" but not node-authoritative.
+      this.status = 'connected';
+      this.label = 'Mock (synthetic localnet)';
+      this.render();
       return;
     }
-    if (mode === 'LIVE' || mode === 'MOCK') {
-      this.setStatus('connected');
+
+    if (mode === 'LIVE') {
+      this.status = 'connected';
+      this.label = wsState?.connected ? 'Live (node + WS)' : 'Live (node)';
+      
+      const rpcCompat = appState.get('rpcCompat') || {};
+      const probe = rpcCompat.probe || {};
+      const missingCount = Object.values(probe).filter(r => r.ok === false).length;
+      if (missingCount > 0) {
+        this.label += ` (Missing ${missingCount} RPC methods)`;
+        this.status = 'degraded';
+        
+        // Make actionable: click to view report
+        this.container.title = 'Click to view missing RPC methods details';
+        this.container.style.cursor = 'pointer';
+        this.container.onclick = () => RpcCompatModal.show();
+      } else {
+        this.container.title = 'All required RPC methods available';
+        this.container.style.cursor = 'default';
+        this.container.onclick = null;
+      }
+      
+      this.render();
       return;
     }
-    this.setStatus('connecting');
+
+    this.status = 'connecting';
+    this.label = 'Detecting node…';
+    this.render();
   }
 
   render() {
     if (!this.container) return;
 
     this.container.className = `connection-status ${this.status}`;
-
-    const statusText = {
-      connected: 'Connected',
-      connecting: 'Connecting...',
-      disconnected: 'Disconnected'
-    }[this.status];
-
     this.container.innerHTML = `
       <span class="connection-status-dot"></span>
-      <span class="connection-status-text">${statusText}</span>
+      <span class="connection-status-text">${this.label}</span>
     `;
   }
 
@@ -107,3 +104,4 @@ class ConnectionStatus extends Component {
 }
 
 export default ConnectionStatus;
+

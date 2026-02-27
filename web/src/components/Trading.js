@@ -3,6 +3,7 @@
 // Integrates volume-weighted order book depth chart
 
 import { Component } from '../lifecycle.js';
+import { Capabilities } from '../capabilities.js';
 import appState from '../state.js';
 import { fmt, $ } from '../utils.js';
 import perf from '../perf.js';
@@ -20,6 +21,7 @@ class Trading extends Component {
     this.depthChart = null;
     this.connectionMode = 'DETECTING';
     this.orderBookSource = 'unknown';
+    this.priceSeries = [];
   }
 
   async onMount() {
@@ -45,6 +47,10 @@ class Trading extends Component {
 
     // Fetch or generate initial order book data
     await this.fetchOrderBook();
+    // Sync order entry form to real price to avoid stale default
+    if (this.currentPrice && this.currentPrice !== 1.15) {
+      this.autofillPrice(this.currentPrice);
+    }
 
     // Start periodic updates
     this.interval(() => this.updatePriceTicker(), 3000); // Match block time
@@ -147,6 +153,10 @@ class Trading extends Component {
           <span class="muted small">Market Cap</span>
           <span id="market-cap" class="small">—</span>
         </div>
+        <div class="row space-between mt-2">
+          <span class="muted small">Book Depth / MCap</span>
+          <span id="depth-mcap-pct" class="small">—</span>
+        </div>
         <div class="row space-between mt-4">
           <span class="muted small">Spread</span>
           <span id="spread-bps" class="small">—</span>
@@ -214,7 +224,9 @@ class Trading extends Component {
 
     // Add event listeners
     const buyBtn = panel.querySelector('[data-action="buy"]');
+    Capabilities.bindButton(buyBtn, 'global', 'settlement');
     const sellBtn = panel.querySelector('[data-action="sell"]');
+    Capabilities.bindButton(sellBtn, 'global', 'settlement');
     const resetBtn = panel.querySelector('[data-action="reset"]');
     const qtyInput = panel.querySelector('#order-quantity');
     const priceInput = panel.querySelector('#order-price');
@@ -379,18 +391,22 @@ class Trading extends Component {
     const container = $('#depth-chart-container');
     if (!container || !this.orderBookData) return;
 
+    // Always inject the current unified price so the depth chart mid-line
+    // stays in sync with the price ticker — not a stale order book snapshot
+    const dataWithCurrentPrice = {
+      ...this.orderBookData,
+      last_trade_price: Math.round(this.currentPrice * 100000),
+    };
+
     if (!this.depthChart) {
-      // Create depth chart
-      this.depthChart = new OrderBookDepthChart(this.orderBookData, {
+      this.depthChart = new OrderBookDepthChart(dataWithCurrentPrice, {
         height: 400,
         onPriceClick: (price) => this.autofillPrice(price),
       });
-      
       container.innerHTML = '';
       container.appendChild(this.depthChart.render());
     } else {
-      // Update existing chart
-      this.depthChart.updateData(this.orderBookData);
+      this.depthChart.updateData(dataWithCurrentPrice);
     }
   }
 
@@ -423,7 +439,7 @@ class Trading extends Component {
     }
   }
 
-  handleOrder(side) {
+  async handleOrder(side) {
     const qtyInput = $('#order-quantity');
     const priceInput = $('#order-price');
     
@@ -432,16 +448,27 @@ class Trading extends Component {
     const qty = parseFloat(qtyInput.value) || 10;
     const price = parseFloat(priceInput.value) || this.currentPrice;
     
-    const orders = appState.get('orders') || [];
-    const newOrder = {
-      token: 'BLOCK',
-      side: side.toUpperCase(),
-      qty,
-      price,
-      timestamp: Date.now(),
-    };
+    try {
+      const res = await this.rpc.call('dex.place_order', [{ token: 'BLOCK', side, qty, price }]);
+      const orders = appState.get('orders') || [];
+      const newOrder = res?.order || {
+        token: 'BLOCK',
+        side: side.toUpperCase(),
+        qty,
+        price,
+        timestamp: Date.now(),
+        source: 'mock',
+      };
 
-    appState.set('orders', [newOrder, ...orders]);
+      appState.set('orders', [newOrder, ...orders]);
+      if (res?.order_book) appState.set('orderBook', res.order_book);
+
+      await this.fetchOrderBook();
+      this.updateOrderTotal();
+      qtyInput.value = ''; // visual feedback
+    } catch(e) {
+      console.error('[Trading] Failed to place order', e);
+    }
   }
 
   handleAction(action) {
@@ -451,56 +478,69 @@ class Trading extends Component {
   }
 
   updatePriceTicker() {
-    // In MOCK mode, use formula-based price updates (from mockDataManager)
-    // In LIVE mode, fetch from RPC
-    
-    if (mockDataManager.isMockMode()) {
-      const priceHistory = mockDataManager.get('priceHistory');
-      if (priceHistory && priceHistory.length > 0) {
-        const latestPrice = priceHistory[priceHistory.length - 1].value / 100000;
-        const prevPrice = priceHistory[priceHistory.length - 2]?.value / 100000 || latestPrice;
-        const change = latestPrice - prevPrice;
-        const changePct = (change / prevPrice) * 100;
-        
-        this.currentPrice = latestPrice;
-        
-        const priceEl = $('#current-price');
-        const changeEl = $('#price-change');
-        
-        if (priceEl) {
-          priceEl.textContent = fmt.currency(this.currentPrice);
-          priceEl.style.color = change > 0 ? 'var(--success)' : change < 0 ? 'var(--danger)' : 'var(--accent)';
-        }
-        
-        if (changeEl) {
-          const sign = change > 0 ? '+' : '';
-          changeEl.textContent = `${sign}${changePct.toFixed(2)}%`;
-          changeEl.style.color = change > 0 ? 'var(--success)' : 'var(--danger)';
-        }
+    // Track observed price locally (works in LIVE+mock-fallback and MOCK)
+    const now = Date.now();
+    const price = Number(this.currentPrice);
+    if (Number.isFinite(price) && price > 0) {
+      this.priceSeries.push({ ts: now, price });
+      // prune >24h and cap size to avoid unbounded growth
+      const cutoff = now - 86_400_000;
+      this.priceSeries = this.priceSeries.filter(p => p.ts >= cutoff).slice(-5000);
+    }
+
+    // 24h high/low from local series (not from mockDataManager)
+    const series = this.priceSeries.length ? this.priceSeries : [];
+    if (series.length >= 2) {
+      const vals = series.map(p => p.price);
+      const high = Math.max(...vals);
+      const low  = Math.min(...vals);
+      const high24h = $('#high-24h');
+      const low24h  = $('#low-24h');
+      if (high24h) high24h.textContent = fmt.currency(high);
+      if (low24h)  low24h.textContent  = fmt.currency(low);
+      
+      const latestPrice = vals[vals.length - 1];
+      const prevPrice = vals[vals.length - 2];
+      const change = latestPrice - prevPrice;
+      const changePct = prevPrice > 0 ? (change / prevPrice) * 100 : 0;
+      
+      const priceEl = $('#current-price');
+      const changeEl = $('#price-change');
+      
+      if (priceEl) {
+        priceEl.textContent = fmt.currency(latestPrice);
+        priceEl.style.color = change > 0 ? 'var(--success)' : change < 0 ? 'var(--danger)' : 'var(--accent)';
+      }
+      
+      if (changeEl) {
+        const sign = change > 0 ? '+' : '';
+        changeEl.textContent = `${sign}${changePct.toFixed(2)}%`;
+        changeEl.style.color = change > 0 ? 'var(--success)' : change < 0 ? 'var(--danger)' : 'var(--muted)';
       }
     }
-    
-    // Update stats (formula-based, not random)
-    const high24h = $('#high-24h');
-    const low24h = $('#low-24h');
-    const volume24h = $('#volume-24h');
-    const marketCap = $('#market-cap');
-    
-    if (high24h) high24h.textContent = fmt.currency(this.currentPrice * 1.08);
-    if (low24h) low24h.textContent = fmt.currency(this.currentPrice * 0.92);
-    
-    if (this.orderBookData) {
-      if (volume24h) {
-        const vol = this.orderBookData.total_bid_volume + this.orderBookData.total_ask_volume;
-        volume24h.textContent = fmt.num(vol * 24); // Rough 24h estimate
-      }
+
+    // Volume / market cap / depth-to-mcap: read strictly from current orderBook snapshot
+    const ob = appState.get('orderBook') || {};
+    const volume24hEl = $('#volume-24h');
+    if (volume24hEl) {
+      if (ob.volume_24h_usd != null) volume24hEl.textContent = `$${fmt.num(ob.volume_24h_usd)}`;
+      else if (ob.volume_24h_block != null) volume24hEl.textContent = `${fmt.num(ob.volume_24h_block)} BLOCK`;
+      else volume24hEl.textContent = '—';
     }
-    
-    if (marketCap) {
-      // Market cap = price * circulating supply (mock: 3.2M BLOCK)
-      const circulatingSupply = 3_200_000;
-      marketCap.textContent = fmt.currency(this.currentPrice * circulatingSupply);
+
+    const marketCapEl = $('#market-cap');
+    if (marketCapEl) {
+      if (ob.market_cap_usd != null) marketCapEl.textContent = fmt.currency(ob.market_cap_usd);
+      else marketCapEl.textContent = '—';
     }
+
+    const depthMcapEl = $('#depth-mcap-pct');
+    if (depthMcapEl) {
+      depthMcapEl.textContent = ob.depth_to_mcap_pct != null ? `${ob.depth_to_mcap_pct}%` : '—';
+    }
+
+    // Keep depth chart mid-line synced
+    this.updateDepthChart();
   }
 
   updateConnectionIndicator() {
@@ -528,9 +568,9 @@ class Trading extends Component {
       // Simulated badge
       const badge = $('#sim-badge');
       if (badge) {
-        const simulated = this.orderBookSource !== 'live';
-        badge.style.display = simulated ? 'inline-flex' : 'none';
-        badge.textContent = simulated ? 'Simulated' : '';
+        const simulatedMarket = this.orderBookSource !== 'live';
+        badge.style.display = simulatedMarket ? 'inline-flex' : 'none';
+        badge.textContent = simulatedMarket ? 'Simulated' : '';
       }
     }
   }

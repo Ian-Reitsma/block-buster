@@ -31,37 +31,197 @@ class NetworkIssuanceChart extends Component {
     const useLive = features.isEnabled('economics_live');
     if (useLive) {
       try {
-        const economics = await this.rpc.call('economics.replay', { to_height: 'tip' });
-        this.isSimulated = false;
-        return this.transformLiveData(economics);
+        return await this._fetchChainData();
       } catch (error) {
-        console.warn('[NetworkIssuanceChart] Live economics RPC failed, falling back to simulated:', error?.message);
+        console.warn('[NetworkIssuanceChart] Chain fetch failed, falling back to mock:', error?.message);
       }
     }
     this.isSimulated = true;
-    return mockDataManager.get('issuance');
+    return this._applyQuadraticDecay(mockDataManager.get('issuance'));
   }
 
-  transformLiveData(economics) {
-    // Transform live RPC data to component format
+  // ── Chain fetch: replaces phantom economics.replay RPC ──────────────────────────────────────
+  //
+  // REMOVED: economics.replay — this RPC namespace does not exist.
+  // apis_and_tooling.md lists no economics.* namespace; every call silently threw to mock.
+  //
+  // Real data sources (all verified in apis_and_tooling.md RPC table):
+  //   governor.status        → economics_prev_market_metrics (utilization/margin ppm per market)
+  //   consensus.block_height → current height → emission approximation
+  //   receipt.audit          → best-effort: EpochEconomicsReceipt with total_emission,
+  //                            next_block_reward_per_block, unique_miners, tx_count/volume
+  async _fetchChainData() {
+    const EPOCH_BLOCKS = 120;
+
+    const [governorStatus, blockHeightResp] = await Promise.all([
+      this.rpc.getGovernorStatus(),
+      this.rpc.getBlockHeight(),
+    ]);
+
+    let epochReceipt = null;
+    try {
+      const currentHeight = blockHeightResp?.height ?? 0;
+      const auditResp = await this.rpc.call('receipt.audit', {
+        start_height: Math.max(0, currentHeight - EPOCH_BLOCKS * 10),
+        end_height:   currentHeight,
+        limit:        5,
+      });
+      const receipts = Array.isArray(auditResp?.receipts) ? auditResp.receipts : [];
+      for (let i = receipts.length - 1; i >= 0; i--) {
+        const r = receipts[i];
+        if (
+          r?.receipt_type === 'epoch_economics' ||
+          r?.receipt_type === 'EpochEconomics'  ||
+          r?.receipt?.epoch !== undefined
+        ) {
+          epochReceipt = r.receipt ?? r;
+          break;
+        }
+      }
+    } catch (_) {
+      // receipt.audit not yet active on this node — silent
+    }
+
+    this.isSimulated = false;
+    return this._mapChainToDisplay(governorStatus, blockHeightResp, epochReceipt);
+  }
+
+  // ── _mapChainToDisplay: governor.status + block_height + epochReceipt → display data ─────────
+  //
+  // Mirrors EconomicsSimulator.computeOutputs() formula exactly:
+  //   supply_decay        = clamp((remaining/max)², SUPPLY_DECAY_FLOOR, 1)       — QUADRATIC
+  //   decentralization    = isqrt(unique × 10⁶ / baseline) ppm, clamp [500K, 2M] — ppm-space
+  //   activity_multiplier = clamp(cbrt(txCount × txVol × (1+util)), 0.5, 1.8)
+  _mapChainToDisplay(governorStatus, blockHeightResp, epochReceipt) {
+    const MAX_SUPPLY            = 40_000_000;
+    const EXPECTED_TOTAL_BLOCKS = 100_000_000;
+    const BLOCKS_PER_YEAR       = 365 * 24 * 3600;
+    const SUPPLY_DECAY_FLOOR    = 0.05;
+    const ACTIVITY_MIN          = 0.5;
+    const ACTIVITY_MAX          = 1.8;
+    const DECENTR_MIN_PPM       = 500_000;
+    const DECENTR_MAX_PPM       = 2_000_000;
+    const TARGET_BPS            = 500;
+
+    // ── Base reward (chain constant) ──
+    const baseReward = (0.9 * MAX_SUPPLY) / EXPECTED_TOTAL_BLOCKS;  // 0.36 BLOCK
+
+    // ── Fields from EpochEconomicsReceipt (null-safe: silent if not yet active) ──
+    const totalEmission  = epochReceipt?.total_emission              ?? null;
+    const nextReward     = epochReceipt?.next_block_reward_per_block ?? null;
+    const uniqueMiners   = epochReceipt?.unique_miners               ?? 23;
+    const baselineMiners = epochReceipt?.baseline_miners             ?? 20;
+    const txCountRatio   = (epochReceipt?.epoch_tx_count && epochReceipt?.baseline_tx_count)
+      ? epochReceipt.epoch_tx_count   / epochReceipt.baseline_tx_count
+      : 1.0;
+    const txVolumeRatio  = (epochReceipt?.epoch_tx_volume_block && epochReceipt?.baseline_tx_volume_block)
+      ? epochReceipt.epoch_tx_volume_block / epochReceipt.baseline_tx_volume_block
+      : 1.0;
+
+    // ── Emission: receipt preferred, height-derived fallback ──
+    const currentHeight  = blockHeightResp?.height ?? 0;
+    const approxEmission = totalEmission ?? Math.min(currentHeight * baseReward, MAX_SUPPLY);
+
+    // ── Average market utilization from governor.status ──
+    const rawMetrics = governorStatus?.economics_prev_market_metrics
+                    || governorStatus?.metrics?.economics_prev_market_metrics;
+    let avgUtil = 0.65;
+    if (Array.isArray(rawMetrics) && rawMetrics.length > 0) {
+      const utils = rawMetrics.map(m => (m.utilization_ppm ?? 650_000) / 1_000_000);
+      avgUtil = utils.reduce((s, v) => s + v, 0) / utils.length;
+    } else if (rawMetrics?.utilization_ppm) {
+      avgUtil = rawMetrics.utilization_ppm / 1_000_000;
+    }
+
+    // ── Activity multiplier: geometric mean of three ratios, clamped ──
+    const activityMultiplier = Math.max(ACTIVITY_MIN, Math.min(ACTIVITY_MAX,
+      Math.cbrt(txCountRatio * txVolumeRatio * (1 + avgUtil)),
+    ));
+
+    // ── Decentralization: ppm-space integer-sqrt (mirrors network_issuance.rs isqrt) ──
+    const ratioPpm           = Math.max(uniqueMiners, 1) * 1_000_000 / Math.max(baselineMiners, 1);
+    const decentrPpm         = Math.max(DECENTR_MIN_PPM, Math.min(DECENTR_MAX_PPM, Math.floor(Math.sqrt(ratioPpm))));
+    const decentralizationFactor = decentrPpm / 1_000_000;
+
+    // ── Supply decay: QUADRATIC on remaining-supply ratio ──
+    // Corrected from linear → quadratic to match economics_and_governance.md and Rust node.
+    const remainingRatio = (MAX_SUPPLY - approxEmission) / MAX_SUPPLY;
+    const supplyDecay    = Math.max(SUPPLY_DECAY_FLOOR, Math.min(1, remainingRatio * remainingRatio));
+
+    // ── Final reward: from receipt when available, else recomputed ──
+    const finalReward = nextReward
+      ?? (baseReward * activityMultiplier * decentralizationFactor * supplyDecay);
+
+    // ── Inflation ──
+    const annualIssuance = finalReward * BLOCKS_PER_YEAR;
+    const inflationBps   = approxEmission > 0
+      ? Math.round((annualIssuance / approxEmission) * 10_000)
+      : 0;
+    const epochNumber    = epochReceipt?.epoch ?? Math.floor(currentHeight / 120);
+
     return {
-      base_reward: economics.base_reward_per_block || 0.36,
-      activity_multiplier: economics.activity_multiplier || 1.35,
-      decentralization_factor: economics.decentralization_factor || 1.15,
-      supply_decay: economics.supply_decay || 0.92,
-      final_reward: economics.block_reward || 0.51,
-      epoch: economics.epoch || 0,
-      inflation_error_bps: economics.inflation_error_bps || 0,
+      base_reward:             baseReward,
+      activity_multiplier:     activityMultiplier,
+      decentralization_factor: decentralizationFactor,
+      decentr_ppm:             decentrPpm,
+      supply_decay:            supplyDecay,
+      remaining_ratio:         remainingRatio,
+      final_reward:            finalReward,
+      epoch:                   epochNumber,
+      inflation_error_bps:     inflationBps - TARGET_BPS,
       // Activity breakdown
-      tx_count_ratio: economics.tx_count_ratio || 1.2,
-      tx_volume_ratio: economics.tx_volume_ratio || 1.5,
-      market_utilization: economics.avg_market_utilization || 0.65,
+      tx_count_ratio:          txCountRatio,
+      tx_volume_ratio:         txVolumeRatio,
+      market_utilization:      avgUtil,
       // Decentralization
-      unique_miners: economics.unique_miners || 23,
-      baseline_miners: economics.baseline_miners || 20,
+      unique_miners:           uniqueMiners,
+      baseline_miners:         baselineMiners,
       // Supply
-      emission: economics.emission_consumer || 3_200_000,
-      max_supply: 40_000_000,
+      emission:                approxEmission,
+      max_supply:              MAX_SUPPLY,
+      _receipt_active:         !!epochReceipt,
+    };
+  }
+
+  // ── _applyQuadraticDecay: recompute supply_decay + decentralization on mock data ─────────────
+  //
+  // Mock data carries supply_decay as a linear value.
+  // This corrects it to quadratic and recomputes decentralization via ppm-space isqrt,
+  // keeping the chart visually consistent with EconomicsSimulator.computeOutputs().
+  _applyQuadraticDecay(mock) {
+    if (!mock) return mock;
+    const MAX_SUPPLY         = 40_000_000;
+    const SUPPLY_DECAY_FLOOR = 0.05;
+    const DECENTR_MIN_PPM    = 500_000;
+    const DECENTR_MAX_PPM    = 2_000_000;
+    const ACTIVITY_MIN       = 0.5;
+    const ACTIVITY_MAX       = 1.8;
+
+    const emission       = mock.emission_consumer ?? mock.total_emission ?? mock.emission ?? 3_200_000;
+    const remainingRatio = (MAX_SUPPLY - emission) / MAX_SUPPLY;
+    const supplyDecay    = Math.max(SUPPLY_DECAY_FLOOR, Math.min(1, remainingRatio * remainingRatio));
+
+    const uniqueMiners   = mock.unique_miners   ?? 23;
+    const baselineMiners = mock.baseline_miners ?? 20;
+    const ratioPpm       = Math.max(uniqueMiners, 1) * 1_000_000 / Math.max(baselineMiners, 1);
+    const decentrPpm     = Math.max(DECENTR_MIN_PPM, Math.min(DECENTR_MAX_PPM, Math.floor(Math.sqrt(ratioPpm))));
+    const decentralizationFactor = decentrPpm / 1_000_000;
+
+    const baseReward    = (0.9 * MAX_SUPPLY) / 100_000_000;
+    const actMultiplier = Math.max(ACTIVITY_MIN, Math.min(ACTIVITY_MAX, mock.activity_multiplier ?? 1.35));
+    const finalReward   = baseReward * actMultiplier * decentralizationFactor * supplyDecay;
+
+    return {
+      ...mock,
+      emission,
+      max_supply:              MAX_SUPPLY,
+      supply_decay:            supplyDecay,
+      remaining_ratio:         remainingRatio,
+      decentralization_factor: decentralizationFactor,
+      decentr_ppm:             decentrPpm,
+      final_reward:            finalReward,
+      unique_miners:           uniqueMiners,
+      baseline_miners:         baselineMiners,
     };
   }
 
@@ -253,10 +413,10 @@ class NetworkIssuanceChart extends Component {
         <div class="breakdown-card" data-multiplier="decentralization">
           <div class="breakdown-header">
             <h4>Decentralization Factor</h4>
-            <span class="breakdown-value">${this.data.decentralization_factor.toFixed(4)}</span>
+            <span class="breakdown-value">${this.data.decentralization_factor.toFixed(4)} (${(this.data.decentr_ppm ?? Math.round(this.data.decentralization_factor * 1_000_000)).toLocaleString()} ppm)</span>
           </div>
           <div class="breakdown-formula">
-            <code>sqrt(${this.data.unique_miners} / ${this.data.baseline_miners})</code>
+            <code>isqrt(${this.data.unique_miners} × 10⁶ / ${this.data.baseline_miners}) ppm · clamp [500K, 2M ppm]</code>
           </div>
           <div class="breakdown-components">
             <div class="component-item">
@@ -280,7 +440,7 @@ class NetworkIssuanceChart extends Component {
             <span class="breakdown-value">${this.data.supply_decay.toFixed(4)}</span>
           </div>
           <div class="breakdown-formula">
-            <code>(${fmt.num(this.data.max_supply)} - ${fmt.num(this.data.emission)}) / ${fmt.num(this.data.max_supply)}</code>
+            <code>((${fmt.num(this.data.max_supply)} − ${fmt.num(this.data.emission)}) / ${fmt.num(this.data.max_supply)})²</code>
           </div>
           <div class="breakdown-components">
             <div class="component-item">
@@ -295,9 +455,13 @@ class NetworkIssuanceChart extends Component {
               <span class="component-label">% Issued:</span>
               <span class="component-value">${((this.data.emission / this.data.max_supply) * 100).toFixed(2)}%</span>
             </div>
+            <div class="component-item">
+              <span class="component-label">Linear ratio:</span>
+              <span class="component-value">${(this.data.remaining_ratio ?? ((this.data.max_supply - this.data.emission) / this.data.max_supply)).toFixed(4)}</span>
+            </div>
           </div>
           <div class="breakdown-description">
-            Linear decay toward 40M cap (halving-style tail)
+            Quadratic decay on remaining-supply ratio — (remaining/max)² · floor 0.05
           </div>
         </div>
       </div>

@@ -10,16 +10,17 @@
     <link rel="preconnect" href="http://localhost:5000" crossorigin />
     
     <!-- Styles -->
-    <link rel="stylesheet" href="./src/styles.css" />
-    <link rel="stylesheet" href="./src/styles/layouts.css" />
-    <link rel="stylesheet" href="./src/styles/components.css" />
-    <link rel="stylesheet" href="./src/styles/modern-ux.css" />
+    <link rel="stylesheet" href="/css/tailwind.min.css" />
+    <link rel="stylesheet" href="/src/styles.css" />
+    <link rel="stylesheet" href="/src/styles/layouts.css" />
+    <link rel="stylesheet" href="/src/styles/components.css" />
+    <link rel="stylesheet" href="/src/styles/modern-ux.css" />
     
     <!-- Runtime configuration (optional) -->
     <script>
       // Allow runtime API configuration via window object
-      window.BLOCK_BUSTER_API = window.BLOCK_BUSTER_API || 'http://localhost:5000';
-      window.BLOCK_BUSTER_HEALTH = window.BLOCK_BUSTER_HEALTH || `${window.BLOCK_BUSTER_API}/health`;
+      window.BLOCK_BUSTER_API = window.BLOCK_BUSTER_API ?? '';
+      window.BLOCK_BUSTER_HEALTH = window.BLOCK_BUSTER_HEALTH ?? '/health';
     </script>
   </head>
   <body>
@@ -55,7 +56,7 @@
     </div>
     
     <!-- Main application entry point -->
-    <script type="module" src="./src/main.js"></script>
+    <script type="module" src="/src/main.js"></script>
     
     <!-- Performance stats overlay (dev only) -->
     <script type="module">

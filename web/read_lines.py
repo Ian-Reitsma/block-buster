@@ -1,0 +1,1 @@
+import os\nwith open('src/mock-data-manager.js', 'r') as f:\n    lines = f.readlines()\nfor i, line in enumerate(lines[75:90]):\n    print(f"{i+76}: {repr(line)}")\n

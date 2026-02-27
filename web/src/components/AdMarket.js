@@ -15,6 +15,7 @@ import DataTable from './DataTable.js';
 import Modal from './Modal.js';
 import { fmt, $ } from '../utils.js';
 import perf from '../perf.js';
+import { Capabilities } from '../capabilities.js';
 
 class AdMarket extends Component {
   constructor(rpc) {
@@ -145,11 +146,13 @@ class AdMarket extends Component {
 
     const createBtn = $('#create-campaign-btn');
     if (createBtn) {
+      Capabilities.bindButton(createBtn, 'ad', 'settlement');
       this.listen(createBtn, 'click', () => this.showCreateCampaignModal());
     }
 
     const bidBtn = $('#submit-bid-btn');
     if (bidBtn) {
+      Capabilities.bindButton(bidBtn, 'ad', 'settlement');
       this.listen(bidBtn, 'click', () => this.showSubmitBidModal());
     }
   }
@@ -243,7 +246,7 @@ class AdMarket extends Component {
             return `<span class="pill ${statusClass}">${val}</span>`;
           }},
         ],
-         campaigns,
+          campaigns,
         selectable: true,
         pageSize: 25,
         rowActions: [
@@ -286,7 +289,7 @@ class AdMarket extends Component {
           { key: 'cpm', label: 'CPM', sortable: true, align: 'right', format: 'currency' },
           { key: 'timestamp', label: 'Timestamp', sortable: true, format: 'datetime' },
         ],
-         bids,
+          bids,
         selectable: true,
         pageSize: 50,
         rowActions: [
@@ -364,6 +367,7 @@ class AdMarket extends Component {
 
       const submitBtn = $('#submit-campaign');
       if (submitBtn) {
+        Capabilities.bindButton(submitBtn, 'ad', 'settlement');
         submitBtn.addEventListener('click', async () => {
           await this.createCampaign();
           modal.close();
@@ -407,6 +411,7 @@ class AdMarket extends Component {
 
       const submitBtn = $('#submit-bid');
       if (submitBtn) {
+        Capabilities.bindButton(submitBtn, 'ad', 'settlement');
         submitBtn.addEventListener('click', async () => {
           await this.submitBid();
           modal.close();

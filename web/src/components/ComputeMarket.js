@@ -15,6 +15,7 @@ import DataTable from './DataTable.js';
 import Modal from './Modal.js';
 import { fmt, $ } from '../utils.js';
 import perf from '../perf.js';
+import { Capabilities } from '../capabilities.js';
 
 class ComputeMarket extends Component {
   constructor(rpc) {
@@ -132,7 +133,10 @@ class ComputeMarket extends Component {
     this.renderActiveView();
 
     const submitBtn = $('#submit-job-btn');
-    if (submitBtn) this.listen(submitBtn, 'click', () => this.showSubmitJobModal());
+    if (submitBtn) {
+      Capabilities.bindButton(submitBtn, 'compute', 'settlement');
+      this.listen(submitBtn, 'click', () => this.showSubmitJobModal());
+    }
   }
 
   renderActiveView() {
@@ -222,7 +226,7 @@ class ComputeMarket extends Component {
           }},
           { key: 'submitted_at', label: 'Submitted', sortable: true, format: 'datetime' },
         ],
-         jobs,
+          jobs,
         selectable: true,
         pageSize: 50,
         rowActions: [
@@ -262,7 +266,7 @@ class ComputeMarket extends Component {
           { key: 'amount', label: 'Amount', sortable: true, align: 'right', format: 'currency' },
           { key: 'timestamp', label: 'Timestamp', sortable: true, format: 'datetime' },
         ],
-         receipts,
+          receipts,
         selectable: true,
         pageSize: 50,
         rowActions: [
@@ -340,6 +344,7 @@ class ComputeMarket extends Component {
 
       const submitBtn = $('#submit-job');
       if (submitBtn) {
+        Capabilities.bindButton(submitBtn, 'compute', 'settlement');
         submitBtn.addEventListener('click', async () => {
           await this.submitJob();
           modal.close();

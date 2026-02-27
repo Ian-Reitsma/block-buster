@@ -399,3 +399,12 @@
     grid-template-columns: 1fr;
   }
 }
+
+/* RPC Compatibility Degraded State */
+.connection-status.degraded .connection-status-dot {
+  background: var(--warn, #f59e0b);
+  box-shadow: 0 0 8px rgba(245, 158, 11, 0.4);
+}
+.connection-status.degraded .connection-status-text {
+  color: var(--warn, #f59e0b);
+}

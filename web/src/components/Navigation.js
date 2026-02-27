@@ -2,6 +2,7 @@
 // Automatically updates on route changes
 
 import { Component } from '../lifecycle.js';
+import { Capabilities } from '../capabilities.js';
 import appState from '../state.js';
 import { $ } from '../utils.js';
 
@@ -26,6 +27,11 @@ class Navigation extends Component {
       requestAnimationFrame(() => this.updateActiveState());
     });
 
+    // Subscribe to RPC compat changes to re-render nav links
+    this.subscribe(appState, 'rpcCompat', () => {
+      requestAnimationFrame(() => this.render());
+    });
+
     // Listen for hash changes directly (backup)
     this.listen(window, 'hashchange', () => {
       this.updateActiveState();
@@ -44,9 +50,36 @@ class Navigation extends Component {
       link.textContent = route.label;
       link.dataset.route = route.path;
 
+      // Check if the route is a market that might be missing RPC methods
+      let marketMap = {
+        'energy': 'energy',
+        'compute': 'compute',
+        'storage': 'storage',
+        'ads': 'ad'
+      };
+      
+      let isMissing = false;
+      let reason = '';
+      if (marketMap[route.path]) {
+        const check = Capabilities.canPerformAction(marketMap[route.path], 'mutation');
+        if (check.code === 'RPC_MISSING_METHOD') {
+           isMissing = true;
+           reason = check.reason;
+        }
+      }
+
+      if (isMissing) {
+        link.classList.add('disabled-nav-link');
+        link.title = reason;
+        link.style.opacity = '0.4';
+        link.style.cursor = 'not-allowed';
+        link.style.pointerEvents = 'none'; // Prevent clicking natively
+      }
+
       // Add click handler for state update
       this.listen(link, 'click', (e) => {
         e.preventDefault();
+        if (isMissing) return; // double protection
         window.location.hash = route.path;
         appState.set('route', route.path);
       });

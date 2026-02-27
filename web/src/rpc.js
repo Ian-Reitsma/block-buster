@@ -1,3 +1,5 @@
+import mockDataManager from './mock-data-manager.js';
+
 /**
  * JSON-RPC Client for The Block Node
  * Wraps the generic HTTP client with RPC-specific logic
@@ -179,6 +181,8 @@
 
 import ApiClient from './api.js';
 import errorBoundary from './errors.js';
+import { Capabilities } from './capabilities.js';
+import { getActionMetadata } from './capabilities_rpc.js';
 
 // The Block RPC Error Codes
 const RPC_ERROR_CODES = {
@@ -201,6 +205,17 @@ class RpcClient {
    * @returns {Promise<T>} Result from RPC call
    */
   async call(method, params = []) {
+    const meta = getActionMetadata(method);
+    if (meta) {
+      const { allowed, reason, code } = Capabilities.canPerformAction(meta.market, meta.type);
+      if (!allowed) {
+        const err = new Error(`Action blocked by network phase: ${reason}`);
+        err.code = -32090; // Standardize internal phase-gate code
+        err.isPhaseGate = true;
+        err.data = { capability_code: code, reason, market: meta.market, actionType: meta.type };
+        throw err;
+      }
+    }
     const payload = {
       jsonrpc: '2.0',
       method,
@@ -236,23 +251,49 @@ class RpcClient {
    * @returns {Promise<Array<{result?: any, error?: RpcError}>>} Results array
    */
   async batch(calls) {
-    const payload = calls.map((call) => ({
+    // Pre-validate each call.
+    const preValidated = calls.map((call, index) => {
+      const meta = getActionMetadata(call.method);
+      if (meta) {
+        const { allowed, reason, code } = Capabilities.canPerformAction(meta.market, meta.type);
+        if (!allowed) {
+          const err = new Error(`Action blocked by network phase: ${reason}`);
+          err.code = -32090;
+          err.isPhaseGate = true;
+          err.method = call.method;
+          err.data = { capability_code: code, reason, market: meta.market, actionType: meta.type };
+          return { originalIndex: index, call: null, error: err };
+        }
+      }
+      return { originalIndex: index, call, error: null };
+    });
+
+    const validCalls = preValidated.filter(v => v.call !== null);
+    const payload = validCalls.map((v) => ({
       jsonrpc: '2.0',
-      method: call.method,
-      params: call.params || [],
+      method: v.call.method,
+      params: v.call.params || [],
       id: this.requestId++,
     }));
 
     try {
-      const responses = await this.apiClient.post('/rpc', payload);
+      let responses = [];
+      if (payload.length > 0) {
+        responses = await this.apiClient.post('/rpc', payload);
+      }
 
-      // Check each response for errors
-      return responses.map((response, index) => {
+      // Reconstruct the array matching the original 'calls' index
+      let responseIndex = 0;
+      return preValidated.map((v) => {
+        if (v.error) {
+          return { error: v.error };
+        }
+        const response = responses[responseIndex++];
         if (response.error) {
           const error = new Error(response.error.message || 'RPC Error');
           error.code = response.error.code;
           error.data = response.error.data;
-          error.method = calls[index].method;
+          error.method = v.call.method;
           return { error };
         }
         return { result: response.result };
@@ -485,6 +526,14 @@ class RpcClient {
 
   async getAdBudget(params = {}) {
     return this.call('ad_market.budget', [params]);
+  }
+
+  async getAdReadiness(params = {}) {
+    return this.call('ad_market.readiness', [params]);
+  }
+
+  async getAdPolicySnapshot(params = {}) {
+    return this.call('ad_market.policy_snapshot', [params]);
   }
 
   async getAdBrokerState(params = {}) {

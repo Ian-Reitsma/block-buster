@@ -3,6 +3,7 @@
 
 import { Component } from '../lifecycle.js';
 import { $ } from '../utils.js';
+import appState from '../state.js';
 
 class MockModeNotice extends Component {
   constructor() {
@@ -114,6 +115,19 @@ class MockModeNotice extends Component {
             <li>✅ Validator set: 21 validators</li>
           </ul>
         </div>
+
+        <div class="mock-mode-interstitial-box" style="margin-top: 15px;">
+          <h3>🎮 Scenario Simulation</h3>
+          <p>Select a scenario to model different network states:</p>
+          <select id="mock-scenario-select" style="width: 100%; padding: 8px; margin-top: 10px; background: var(--bg-dark); color: white; border: 1px solid var(--border-color); border-radius: 4px;">
+            <option value="NONE">Standard Localnet (Realistic noise)</option>
+            <option value="STRESS">High Load / Stress Test (2.5x TPS)</option>
+            <option value="OUTAGE">Network Outage (Dropped blocks, low TPS)</option>
+            <option value="ATTACK">Sybil / Spam Attack (3.5x TPS, 3x Fees)</option>
+            <option value="FEE_SPIKE">Gas Fee Spike (4x Base Fee)</option>
+            <option value="VOLATILITY">High Price Volatility (4x Price Swings)</option>
+          </select>
+        </div>
         
         <div class="mock-mode-interstitial-actions">
           <button class="btn primary large" id="continue-mock">
@@ -133,8 +147,13 @@ class MockModeNotice extends Component {
     // Wire up buttons
     const continueBtn = overlay.querySelector('#continue-mock');
     const retryBtn = overlay.querySelector('#retry-connection');
+    const scenarioSelect = overlay.querySelector('#mock-scenario-select');
 
     continueBtn.onclick = () => {
+      // Save the selected scenario to appState so MockDataManager picks it up
+      appState.set('scenarioPreset', scenarioSelect.value);
+      appState.set('simulationMode', scenarioSelect.value === 'NONE' ? 'LOCALNET' : 'SCENARIO');
+      
       overlay.classList.add('mock-mode-interstitial-hiding');
       setTimeout(() => {
         overlay.remove();

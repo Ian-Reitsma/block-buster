@@ -16,6 +16,7 @@ import DataTable from './DataTable.js';
 import Modal from './Modal.js';
 import { fmt, $ } from '../utils.js';
 import perf from '../perf.js';
+import { Capabilities } from '../capabilities.js';
 
 class EnergyMarket extends Component {
   constructor(rpc) {
@@ -158,11 +159,13 @@ class EnergyMarket extends Component {
     // Attach button handlers
     const registerBtn = $('#register-provider-btn');
     if (registerBtn) {
+      Capabilities.bindButton(registerBtn, 'energy', 'mutation');
       this.listen(registerBtn, 'click', () => this.showRegisterProviderModal());
     }
 
     const readingBtn = $('#submit-reading-btn');
     if (readingBtn) {
+      Capabilities.bindButton(readingBtn, 'energy', 'mutation');
       this.listen(readingBtn, 'click', () => this.showSubmitReadingModal());
     }
 
@@ -336,7 +339,7 @@ class EnergyMarket extends Component {
           { key: 'jurisdiction', label: 'Jurisdiction', sortable: true, filterable: true },
           { key: 'meter_address', label: 'Meter Address', filterable: true },
         ],
-         providers,
+          providers,
         selectable: true,
         pageSize: 25,
         rowActions: [
@@ -376,7 +379,7 @@ class EnergyMarket extends Component {
           { key: 'amount', label: 'Amount', sortable: true, align: 'right', format: 'currency' },
           { key: 'timestamp', label: 'Timestamp', sortable: true, format: 'datetime' },
         ],
-         receipts,
+          receipts,
         selectable: true,
         pageSize: 50,
         rowActions: [
@@ -419,7 +422,7 @@ class EnergyMarket extends Component {
           }},
           { key: 'created_at', label: 'Created', sortable: true, format: 'datetime' },
         ],
-         disputes,
+          disputes,
         selectable: true,
         pageSize: 25,
         rowActions: [
@@ -506,6 +509,7 @@ class EnergyMarket extends Component {
 
       const submitBtn = $('#submit-register');
       if (submitBtn) {
+        Capabilities.bindButton(submitBtn, 'energy', 'mutation');
         submitBtn.addEventListener('click', async () => {
           await this.submitProviderRegistration();
           modal.close();
@@ -550,6 +554,7 @@ class EnergyMarket extends Component {
 
       const submitBtn = $('#submit-reading');
       if (submitBtn) {
+        Capabilities.bindButton(submitBtn, 'energy', 'mutation');
         submitBtn.addEventListener('click', async () => {
           await this.submitMeterReading();
           modal.close();
